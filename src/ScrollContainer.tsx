@@ -15,6 +15,10 @@ const ScrollContainer = (
     ref?: Ref<HTMLDivElement>;
     horizontalAxis?: string;
     verticalAxis?: string;
+    // When wheel scrolling zooms instead of pans. "alt" (default) = only while the
+    // Alt/Option key is held (plain wheel pans natively); "always" = every wheel
+    // event zooms; "never" = wheel never zooms.
+    wheelZoom?: "alt" | "always" | "never";
   }>,
 ) => {
   let content: HTMLDivElement | undefined;
@@ -54,12 +58,19 @@ const ScrollContainer = (
   };
 
   const handleWheel = (event: WheelEvent) => {
-    if (!event.altKey) return; // plain wheel = scroll (native); alt = zoom
-    event.preventDefault();
+    const mode = props.wheelZoom ?? "alt";
+    if (mode === "never") return;
+    if (mode === "alt" && !event.altKey) return; // plain wheel = scroll (native)
+    const hv = h();
+    const vv = v();
+    // Zoom the axis matching the dominant delta direction, but fall back to
+    // whichever axis exists (a 1-D surface has only one, and a mouse wheel emits
+    // deltaY even when the sole axis is horizontal).
     const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
-    const axis = horizontal ? h() : v();
+    const axis = (horizontal ? hv : vv) ?? hv ?? vv;
     if (!axis) return;
-    const delta = horizontal ? event.deltaX : event.deltaY;
+    event.preventDefault();
+    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
     axis.onZoomChange?.(axis.zoom * (1 + delta / axis.pixelSize));
     axis.onPositionChange?.(Math.min(axis.maxPosition(), axis.position));
   };

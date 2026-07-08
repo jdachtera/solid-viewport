@@ -88,13 +88,14 @@ function ZoomDemo() {
         }}
         style={{ position: "relative", height: "120px", border: "1px solid #333", "border-radius": "6px" }}
       >
-        <ScrollContainer>
+        <ScrollContainer wheelZoom="always">
           <Ticks />
         </ScrollContainer>
         <ScrollBar direction="horizontal" />
       </div>
       <p style={{ color: "#888", "font-size": "12px" }}>
-        pos {position().toFixed(0)} · zoom {zoom().toFixed(1)}× — alt+wheel to zoom
+        pos {position().toFixed(0)} · zoom {zoom().toFixed(1)}× — scroll to zoom, drag
+        the scrollbar to pan (or its ends to zoom)
       </p>
     </ViewPort>
   );
