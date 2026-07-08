@@ -233,6 +233,29 @@ with sync_playwright() as p:
     _, z_scrollonly = strip_state(page)
     check("wheel mode 'scroll' never zooms", abs(z_scrollonly - 1) < 1e-6, f"zoom={z_scrollonly:.3f}")
 
+    # Wheel mode "zoom-pan": deltaY zooms AND deltaX pans in one gesture, no key.
+    b, c = fresh_strip()
+    page.query_selector(".demo-wheel").select_option("zoom-pan")
+    page.wait_for_timeout(40)
+    page.mouse.move(*c)
+    page.mouse.wheel(0, -120)  # vertical only -> zoom, no pan (pos anchored at center)
+    page.wait_for_timeout(60)
+    pos_zp, zoom_zp = strip_state(page)
+    check("zoom-pan: vertical wheel zooms (no key)", zoom_zp > 1.02, f"zoom={zoom_zp:.3f}")
+    # Now a horizontal delta pans without changing zoom.
+    page.mouse.wheel(200, 0)  # horizontal only -> pan
+    page.wait_for_timeout(60)
+    pos_zp2, zoom_zp2 = strip_state(page)
+    check("zoom-pan: horizontal wheel pans", pos_zp2 > pos_zp, f"pos {pos_zp:.0f} -> {pos_zp2:.0f}")
+    check("zoom-pan: horizontal pan keeps zoom", abs(zoom_zp2 - zoom_zp) < 1e-6, f"zoom {zoom_zp:.2f} -> {zoom_zp2:.2f}")
+    # And a diagonal delta does both at once.
+    pos_d0, zoom_d0 = strip_state(page)
+    page.mouse.wheel(150, -80)
+    page.wait_for_timeout(60)
+    pos_d1, zoom_d1 = strip_state(page)
+    check("zoom-pan: diagonal zooms and pans together", zoom_d1 > zoom_d0 and pos_d1 != pos_d0,
+          f"zoom {zoom_d0:.2f}->{zoom_d1:.2f}, pos {pos_d0:.0f}->{pos_d1:.0f}")
+
     # ScrollBar responds to a touch (pointer) drag, not just mouse.
     b, c = fresh_strip()
     alt_notch(c, n=6)

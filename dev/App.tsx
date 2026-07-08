@@ -157,6 +157,7 @@ function Controls(props: {
         >
           <option value="alt-zoom">alt-zoom (Alt/pinch zooms)</option>
           <option value="zoom">zoom (no key)</option>
+          <option value="zoom-pan">zoom-pan (Y zooms, X pans)</option>
           <option value="scroll">scroll only</option>
         </select>
       </label>
