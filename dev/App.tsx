@@ -17,6 +17,7 @@ function ListDemo() {
 
   return (
     <div
+      class="demo-list-scroll"
       style={{
         height: "360px",
         "overflow-y": "auto",
@@ -27,6 +28,7 @@ function ListDemo() {
       }}
     >
       <VirtualList
+        class="demo-list"
         items={ROWS}
         itemSize={(r) => r.height}
         overscan={6}
@@ -34,7 +36,7 @@ function ListDemo() {
         fallback={(r) => {
           request(r.id);
           return (
-            <div style={{ padding: "6px 10px", color: "#666", "font-style": "italic" }}>
+            <div class="demo-row" style={{ padding: "6px 10px", color: "#666", "font-style": "italic" }}>
               loading {r.label}…
             </div>
           );
@@ -42,6 +44,7 @@ function ListDemo() {
       >
         {(r, index) => (
           <div
+            class="demo-row"
             style={{
               "box-sizing": "border-box",
               padding: "6px 10px",
@@ -86,6 +89,9 @@ function ZoomDemo() {
           const ro = new ResizeObserver(() => setWidth(el.clientWidth));
           ro.observe(el);
         }}
+        class="demo-strip"
+        data-pos={position()}
+        data-zoom={zoom()}
         style={{ position: "relative", height: "120px", border: "1px solid #333", "border-radius": "6px" }}
       >
         <ScrollContainer wheelZoom="always">
@@ -93,7 +99,7 @@ function ZoomDemo() {
         </ScrollContainer>
         <ScrollBar direction="horizontal" />
       </div>
-      <p style={{ color: "#888", "font-size": "12px" }}>
+      <p class="demo-caption" style={{ color: "#888", "font-size": "12px" }}>
         pos {position().toFixed(0)} · zoom {zoom().toFixed(1)}× — scroll to zoom, drag
         the scrollbar to pan (or its ends to zoom)
       </p>

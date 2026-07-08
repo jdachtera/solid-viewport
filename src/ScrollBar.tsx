@@ -26,7 +26,10 @@ const ScrollBar = (props: {
   });
   const offset = createMemo(() => scrollPercentage() * (axis().pixelSize - size()));
 
-  const [parallelOffset, setParallelOffset] = createSignal<number>(Infinity);
+  // Grab point within the thumb (px from the thumb's start edge) + thumb geometry at
+  // mousedown, so a drag preserves where you grabbed rather than snapping.
+  const [grab, setGrab] = createSignal<number>(Infinity);
+  const [hoverInThumb, setHoverInThumb] = createSignal<number>(Infinity);
   const [startSize, setStartSize] = createSignal(0);
   const [startOffset, setStartOffset] = createSignal(0);
   const [dragHandle, setDragHandle] = createSignal<"start" | "middle" | "end">();
@@ -34,36 +37,54 @@ const ScrollBar = (props: {
   const parallelOf = (e: { clientX: number; clientY: number }) =>
     props.direction === "horizontal" ? e.clientX : e.clientY;
 
+  // Screen coordinate of the track's start edge. The track is the thumb's
+  // offsetParent (the positioned container the bar lives in) — measured live so it
+  // survives layout/scroll changes. This is what was missing: the old code used the
+  // axis pixelOffset (0) as the origin, so the cursor mapped to an absolute screen
+  // position and the thumb jumped.
+  const trackStart = () => {
+    const parent = ref?.offsetParent as HTMLElement | null;
+    const rect = parent?.getBoundingClientRect();
+    if (!rect) return 0;
+    return props.direction === "horizontal" ? rect.left : rect.top;
+  };
+
+  const setPositionFromThumbOffset = (thumbOffset: number, thumbSize: number) => {
+    const denom = axis().pixelSize - thumbSize;
+    const amount = clamp(denom > 0 ? thumbOffset / denom : 0, 0, 1);
+    axis().onPositionChange?.(amount * axis().maxPosition());
+  };
+
   const handleMouseMove = (event: MouseEvent) => {
     if (!ref) return;
-    const parallel = parallelOf(event);
 
     if (dragHandle()) {
       event.preventDefault();
-      event.stopPropagation();
-      const relative = parallel - parallelOffset() - axis().pixelOffset;
+      const track = axis().pixelSize;
+      const pointerInTrack = parallelOf(event) - trackStart();
 
       if (dragHandle() === "middle") {
-        const track = axis().pixelSize - size();
-        const amount = clamp(track > 0 ? relative / track : 0, 0, 1);
-        axis().onPositionChange?.(amount * axis().maxPosition());
+        setPositionFromThumbOffset(pointerInTrack - grab(), size());
+      } else if (dragHandle() === "end") {
+        // Left edge stays put; the right edge follows the cursor → resize = zoom.
+        const right = clamp(pointerInTrack, startOffset() + minThumb(), track);
+        const newZoom = clamp(track / (right - startOffset()), axis().minZoom, axis().maxZoom);
+        axis().onZoomChange?.(newZoom);
+        setPositionFromThumbOffset(startOffset(), track / newZoom);
       } else {
-        const diff =
-          dragHandle() === "start" ? startOffset() - relative : relative - startOffset();
-        const newSize = Math.max(minThumb(), startSize() + diff);
-        const newOffset = dragHandle() === "start" ? relative : startOffset();
-        const newZoom = axis().pixelSize / newSize;
-        const track = axis().pixelSize - newSize;
-        const newPosition = (track > 0 ? newOffset / track : 0) * axis().maxPosition();
-        axis().onZoomChange?.(clamp(newZoom, 1, axis().pixelSize / minThumb()));
-        axis().onPositionChange?.(clamp(newPosition, 0, axis().maxPosition()));
+        // Right edge stays put; the left edge follows the cursor.
+        const rightFixed = startOffset() + startSize();
+        const left = clamp(pointerInTrack, 0, rightFixed - minThumb());
+        const newZoom = clamp(track / (rightFixed - left), axis().minZoom, axis().maxZoom);
+        axis().onZoomChange?.(newZoom);
+        setPositionFromThumbOffset(left, track / newZoom);
       }
-    } else if (ref) {
-      setStartSize(size());
-      setStartOffset(offset());
+    } else {
+      // Not dragging: track where the cursor sits within the thumb, for the resize
+      // cursor hint on the ends.
       const rect = ref.getBoundingClientRect();
-      const pr = props.direction === "horizontal" ? rect.left : rect.top;
-      setParallelOffset(parallel - pr);
+      const start = props.direction === "horizontal" ? rect.left : rect.top;
+      setHoverInThumb(parallelOf(event) - start);
     }
   };
 
@@ -73,15 +94,14 @@ const ScrollBar = (props: {
   const handleMouseDown = (event: MouseEvent) => {
     if (!ref) return;
     const rect = ref.getBoundingClientRect();
-    const pr = props.direction === "horizontal" ? rect.left : rect.top;
-    setParallelOffset(parallelOf(event) - pr);
+    const start = props.direction === "horizontal" ? rect.left : rect.top;
+    const inThumb = parallelOf(event) - start;
 
+    setGrab(inThumb);
+    setStartSize(size());
+    setStartOffset(offset());
     setDragHandle(
-      parallelOffset() < dragHandleSize
-        ? "start"
-        : parallelOffset() > size() - dragHandleSize
-          ? "end"
-          : "middle",
+      inThumb < dragHandleSize ? "start" : inThumb > size() - dragHandleSize ? "end" : "middle",
     );
 
     const up = () => {
@@ -98,8 +118,8 @@ const ScrollBar = (props: {
     "horizontal-end": "e-resize",
   };
   const cursor = createMemo(() => {
-    if (parallelOffset() < dragHandleSize) return cursors[`${props.direction}-start`];
-    if (parallelOffset() > size() - dragHandleSize) return cursors[`${props.direction}-end`];
+    if (hoverInThumb() < dragHandleSize) return cursors[`${props.direction}-start`];
+    if (hoverInThumb() > size() - dragHandleSize) return cursors[`${props.direction}-end`];
     return "pointer";
   });
 
@@ -109,6 +129,8 @@ const ScrollBar = (props: {
   return (
     <div
       ref={ref}
+      class="sv-scrollbar"
+      data-direction={props.direction}
       style={{
         visibility: active() ? "visible" : "hidden",
         "pointer-events": active() ? "all" : "none",

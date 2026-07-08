@@ -1,6 +1,14 @@
 import { createEffect, ParentProps, Ref } from "solid-js";
-import { ViewPortAxis } from "./createViewPortAxis";
+import { clamp, ViewPortAxis } from "./createViewPortAxis";
 import { useAxes } from "./ViewPort";
+
+// Wheel-zoom feel. Normalize delta to px (wheel events come in px/line/page), clamp
+// per event so a single big flick or trackpad-momentum burst can't jump zoom, then
+// apply it as an exponential factor (zoom is multiplicative, so equal ticks feel
+// equal at any zoom level). Scroll up zooms in.
+const WHEEL_LINE_PX = 16;
+const WHEEL_MAX_PX = 120;
+const WHEEL_ZOOM_K = 0.0015;
 
 // The container scrolls natively (for trackpad/momentum panning) but the visible
 // scroll control is the custom <ScrollBar>. Hide the native scrollbar chrome so the
@@ -81,8 +89,11 @@ const ScrollContainer = (
     const axis = (horizontal ? hv : vv) ?? hv ?? vv;
     if (!axis) return;
     event.preventDefault();
-    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
-    axis.onZoomChange?.(axis.zoom * (1 + delta / axis.pixelSize));
+    let delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+    if (event.deltaMode === 1) delta *= WHEEL_LINE_PX; // lines -> px
+    else if (event.deltaMode === 2) delta *= axis.pixelSize; // pages -> px
+    delta = clamp(delta, -WHEEL_MAX_PX, WHEEL_MAX_PX);
+    axis.onZoomChange?.(axis.zoom * Math.exp(-delta * WHEEL_ZOOM_K));
     axis.onPositionChange?.(Math.min(axis.maxPosition(), axis.position));
   };
 
