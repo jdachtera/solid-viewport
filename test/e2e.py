@@ -149,6 +149,91 @@ with sync_playwright() as p:
     check("drag is proportional (small drag = small move)", 0 < moved < max_pos * 0.5,
           f"moved {moved:.0f} of max {max_pos:.0f}")
 
+    # ---- Gap features (fresh page each, clean zoom=1) ----
+    print("\nGap features")
+
+    def fresh_strip():
+        page.goto(URL, wait_until="networkidle")
+        s = page.query_selector(".demo-strip")
+        b = s.bounding_box()
+        return b, (b["x"] + b["width"] / 2, b["y"] + b["height"] / 2)
+
+    def set_range(selector, value):
+        page.query_selector(selector).evaluate(
+            "(el, v) => { el.value = v; el.dispatchEvent(new Event('input', {bubbles:true})); }", value)
+
+    def alt_notch(center, n=1, dy=-120):
+        page.keyboard.down("Alt")
+        page.mouse.move(*center)
+        for _ in range(n):
+            page.mouse.wheel(0, dy)
+            page.wait_for_timeout(40)
+        page.keyboard.up("Alt")
+
+    # ZoomSlider drives zoom.
+    b, c = fresh_strip()
+    set_range(".demo-zoom-slider", 5)
+    page.wait_for_timeout(60)
+    _, zs = strip_state(page)
+    check("ZoomSlider sets zoom", abs(zs - 5) < 0.5, f"zoom={zs:.2f}")
+
+    # Sensitivity: a higher setting zooms more per identical notch.
+    b, c = fresh_strip()
+    alt_notch(c)
+    _, z_low = strip_state(page)
+    b, c = fresh_strip()
+    set_range(".demo-sensitivity", 4)
+    page.wait_for_timeout(40)
+    alt_notch(c)
+    _, z_high = strip_state(page)
+    check("higher sensitivity zooms more per notch", z_high > z_low + 0.1,
+          f"sens1 -> {z_low:.3f}, sens4 -> {z_high:.3f}")
+
+    # Invert: with invert on, an up-notch (which normally zooms in) zooms OUT.
+    b, c = fresh_strip()
+    alt_notch(c, n=4)  # zoom in first so there's room to go down
+    _, z_pre = strip_state(page)
+    page.query_selector(".demo-invert").check()
+    alt_notch(c, n=1)
+    _, z_post = strip_state(page)
+    check("invert flips zoom direction", z_post < z_pre, f"{z_pre:.2f} -> {z_post:.2f} (up-notch)")
+
+    # ensureVisible: reveal a value that's off-screen when zoomed in.
+    b, c = fresh_strip()
+    alt_notch(c, n=10)  # zoom in hard so tick 8000 is off-screen at pos 0
+    pos_ev, zoom_ev = strip_state(page)
+    visible_range = 10_000 / zoom_ev
+    off_before = not (pos_ev <= 8000 <= pos_ev + visible_range)
+    page.query_selector(".demo-scrollto").click()
+    page.wait_for_timeout(80)
+    pos_ev2, zoom_ev2 = strip_state(page)
+    vr2 = 10_000 / zoom_ev2
+    on_after = pos_ev2 <= 8000 <= pos_ev2 + vr2
+    check("ensureVisible reveals an off-screen value", off_before and on_after,
+          f"off_before={off_before}, pos {pos_ev:.0f}->{pos_ev2:.0f}, range {vr2:.0f}")
+
+    # ScrollBar responds to a touch (pointer) drag, not just mouse.
+    b, c = fresh_strip()
+    alt_notch(c, n=6)
+    page.keyboard.up("Alt")
+    tbar = page.query_selector(".sv-scrollbar[data-direction=horizontal]")
+    tb = tbar.bounding_box()
+    pos_t0, _ = strip_state(page)
+    page.mouse.move(tb["x"] + tb["width"] / 2, tb["y"] + tb["height"] / 2)  # ensure not on an end
+    page.evaluate(
+        """([x, y, x2]) => {
+            const el = document.querySelector('.sv-scrollbar[data-direction=horizontal]');
+            const opt = (t, cx) => ({bubbles:true, cancelable:true, pointerId:1, pointerType:'touch', clientX:cx, clientY:y, button:0});
+            el.dispatchEvent(new PointerEvent('pointerdown', opt('down', x)));
+            window.dispatchEvent(new PointerEvent('pointermove', opt('move', x2)));
+            window.dispatchEvent(new PointerEvent('pointerup', opt('up', x2)));
+        }""",
+        [tb["x"] + tb["width"] / 2, tb["y"] + tb["height"] / 2, tb["x"] + tb["width"] / 2 + 40],
+    )
+    page.wait_for_timeout(60)
+    pos_t1, _ = strip_state(page)
+    check("scrollbar responds to touch (pointer) drag", pos_t1 > pos_t0, f"pos {pos_t0:.0f} -> {pos_t1:.0f}")
+
     browser.close()
 
 print(f"\n{len(passed)} passed, {len(failed)} failed")

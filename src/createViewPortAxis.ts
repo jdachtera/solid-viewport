@@ -83,20 +83,37 @@ export default function createViewPortAxis(getState: () => AxisState) {
     // Does a span (from `dimensions`) intersect the viewport at all?
     const isVisible = ({ offset, size }: Dimensions) => offset + size > 0 && offset < s.pixelSize;
 
+    // Emit a position change, clamped against LIVE state rather than this snapshot.
+    // During a wheel handler the caller sets zoom then position in the same tick; the
+    // reactive rebuild hasn't run yet, so a snapshot maxPosition() would still reflect
+    // the old zoom and clip an anchored position. getState() sees the just-set signal.
+    const emitPosition = (position: number) => {
+      const live = getState();
+      const max = Math.max(0, live.range - live.range / live.zoom);
+      live.onPositionChange?.(clamp(position, 0, max));
+    };
+
+    // Programmatic scroll: move the given value to the viewport's start edge.
+    const scrollTo = (position: number) => emitPosition(position);
+
+    // Programmatic scroll: put the given value at the viewport centre.
+    const center = (position: number) => emitPosition(position - visibleRange() / 2);
+
+    // Programmatic scroll: pan the minimum needed so [position, position+length] is
+    // fully on screen (with optional value-space padding). No-op if already visible.
+    const ensureVisible = (position: number, length = 0, padding = 0) => {
+      const vr = visibleRange();
+      const start = s.position;
+      const end = start + vr;
+      if (position - padding < start) emitPosition(position - padding);
+      else if (position + length + padding > end) emitPosition(position + length + padding - vr);
+    };
+
     return {
       ...s,
       minZoom,
       maxZoom,
-      // Clamp against LIVE state, not this snapshot. During a wheel handler the
-      // caller sets zoom then position in the same tick; the reactive rebuild
-      // hasn't run yet, so a snapshot maxPosition() would still reflect the old
-      // zoom and clip an anchored position. Reading getState() sees the just-set
-      // zoom signal synchronously.
-      onPositionChange: (position: number) => {
-        const live = getState();
-        const max = Math.max(0, live.range - live.range / live.zoom);
-        live.onPositionChange?.(clamp(position, 0, max));
-      },
+      onPositionChange: emitPosition,
       onZoomChange: (zoom: number) => {
         const live = getState();
         live.onZoomChange?.(clamp(zoom, live.minZoom ?? 1, live.maxZoom ?? Infinity));
@@ -109,6 +126,9 @@ export default function createViewPortAxis(getState: () => AxisState) {
       dimensions,
       clampedDimensions,
       isVisible,
+      scrollTo,
+      center,
+      ensureVisible,
     };
   };
 

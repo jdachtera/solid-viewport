@@ -85,6 +85,34 @@ const dims = () => axis.dimensions(note.start, note.length); // { offset, size }
 | `isVisible(dims)` | does a span intersect the viewport? |
 | `visibleRange()` | how much of `range` is on screen |
 | `maxPosition()` | largest legal scroll position |
+| `scrollTo(value)` | move `value` to the viewport's start edge |
+| `center(value)` | put `value` at the viewport centre |
+| `ensureVisible(pos, len?, pad?)` | pan the minimum so `[pos, pos+len]` is on screen |
+
+## Wheel behaviour
+
+`<ScrollContainer>` props:
+
+- `wheel` — preset `"alt-zoom"` (default: Alt/Option or ctrl-pinch zooms, else scrolls) · `"zoom"` · `"scroll"` · `"none"` · or a resolver `(event) => ({ type: "zoom" | "scroll" | "none", axis? })` for full control (shift-for-horizontal, per-axis, custom modifiers).
+- `zoomSensitivity` (default 1) / `invertZoom` — zoom feel; wire these to a user preference.
+- `momentum` (default true) — pan via native scroll for trackpad inertia; the 1-D case a native scroll can't reach falls back to a manual pan.
+
+## Zoom slider
+
+```tsx
+import { ZoomSlider } from "solid-viewport";
+<ZoomSlider direction="horizontal" />   // a range input bound to the axis's zoom
+```
+
+## Measuring
+
+`createElementSize(() => el)` gives a reactive `{ width, height }` (ResizeObserver) to feed an axis's `pixelSize`:
+
+```tsx
+let el; const size = createElementSize(() => el);
+// ...pixelSize: size().width
+<div ref={el} />
+```
 
 ## License
 

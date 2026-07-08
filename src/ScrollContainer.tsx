@@ -77,6 +77,15 @@ const ScrollContainer = (
     // "none") or a resolver `(event) => { type, axis? }` for full control (e.g.
     // shift for horizontal, a modifier for zoom). See WheelBehavior.
     wheel?: WheelBehavior;
+    // Wheel-zoom feel. sensitivity scales the zoom rate (1 = default); invertZoom
+    // flips the direction (default: scroll up zooms in).
+    zoomSensitivity?: number;
+    invertZoom?: boolean;
+    // When a wheel event pans an axis the browser can natively scroll, let it (for
+    // trackpad momentum) instead of applying the pan manually. Default true. Manual
+    // pan is always used for the 1-D case a native scroll can't reach (e.g. a
+    // vertical wheel over a horizontal-only axis).
+    momentum?: boolean;
   }>,
 ) => {
   let content: HTMLDivElement | undefined;
@@ -126,7 +135,9 @@ const ScrollContainer = (
     const rect = zoomRect;
     const pointerPx = pointerScreen - (isH ? rect.left : rect.top);
     const valueAtPointer = axis.toPosition(pointerPx);
-    const newZoom = clamp(axis.zoom * Math.exp(-d * WHEEL_ZOOM_K), axis.minZoom, axis.maxZoom);
+    const sens = props.zoomSensitivity && props.zoomSensitivity > 0 ? props.zoomSensitivity : 1;
+    const dir = props.invertZoom ? 1 : -1;
+    const newZoom = clamp(axis.zoom * Math.exp(dir * d * WHEEL_ZOOM_K * sens), axis.minZoom, axis.maxZoom);
     const newVisibleRange = axis.range / newZoom;
     axis.onZoomChange?.(newZoom);
     axis.onPositionChange?.(
@@ -166,9 +177,14 @@ const ScrollContainer = (
       return;
     }
 
-    // Scroll. Map each delta to its natural axis; if neither mapped (1-D routed the
-    // wrong way, e.g. deltaY over a horizontal axis), push the dominant delta to the
-    // primary axis. preventDefault only when we actually moved something.
+    // Scroll. If the browser can natively scroll the axis the delta targets, let it
+    // (momentum) and just sync via handleScroll — don't preventDefault. Only when
+    // native can't reach it (an explicit axis, or a 1-D mismatch like a vertical
+    // wheel over a horizontal-only axis) do we pan manually.
+    const momentum = props.momentum ?? true;
+    const nativeCanScroll = !action.axis && ((!!event.deltaY && !!vv) || (!!event.deltaX && !!hv));
+    if (momentum && nativeCanScroll) return; // native scroll + handleScroll sync
+
     let moved = false;
     if (action.axis) {
       moved = scrollAxis(primary, dominantPx);

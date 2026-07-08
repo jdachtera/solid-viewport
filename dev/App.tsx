@@ -1,5 +1,13 @@
 import { createSignal, Index } from "solid-js";
-import { ScrollBar, ScrollContainer, ViewPort, useAxis, VirtualList } from "../src";
+import {
+  createElementSize,
+  ScrollBar,
+  ScrollContainer,
+  useAxis,
+  ViewPort,
+  VirtualList,
+  ZoomSlider,
+} from "../src";
 
 // 50k rows with varied heights, to show that windowing keeps the DOM tiny.
 const ROWS = Array.from({ length: 50_000 }, (_, i) => ({
@@ -65,8 +73,13 @@ function ListDemo() {
 function ZoomDemo() {
   const [position, setPosition] = createSignal(0);
   const [zoom, setZoom] = createSignal(1);
-  const [width, setWidth] = createSignal(800);
+  const [sensitivity, setSensitivity] = createSignal(1);
+  const [invert, setInvert] = createSignal(false);
   const RANGE = 10_000;
+
+  // Measured pixelSize via the library helper (gap #3) instead of a hand-rolled RO.
+  let stripEl: HTMLDivElement | undefined;
+  const size = createElementSize(() => stripEl);
 
   return (
     <ViewPort
@@ -75,7 +88,7 @@ function ZoomDemo() {
           position: position(),
           range: RANGE,
           pixelOffset: 0,
-          pixelSize: width(),
+          pixelSize: size().width || 800,
           zoom: zoom(),
           minZoom: 1,
           maxZoom: 500,
@@ -85,25 +98,78 @@ function ZoomDemo() {
       }}
     >
       <div
-        ref={(el) => {
-          const ro = new ResizeObserver(() => setWidth(el.clientWidth));
-          ro.observe(el);
-        }}
+        ref={stripEl}
         class="demo-strip"
         data-pos={position()}
         data-zoom={zoom()}
         style={{ position: "relative", height: "120px", border: "1px solid #333", "border-radius": "6px" }}
       >
-        <ScrollContainer>
+        {/* zoomSensitivity + invertZoom (gap #1) wired to demo controls below. */}
+        <ScrollContainer zoomSensitivity={sensitivity()} invertZoom={invert()}>
           <Ticks />
         </ScrollContainer>
         <ScrollBar direction="horizontal" />
       </div>
+      <Controls
+        sensitivity={sensitivity()}
+        setSensitivity={setSensitivity}
+        invert={invert()}
+        setInvert={setInvert}
+      />
       <p class="demo-caption" style={{ color: "#888", "font-size": "12px" }}>
-        pos {position().toFixed(0)} · zoom {zoom().toFixed(1)}× — scroll to pan ·
-        Alt/pinch to zoom (anchored on the cursor) · drag the scrollbar (ends to zoom)
+        pos {position().toFixed(0)} · zoom {zoom().toFixed(1)}× · sens {sensitivity()} · scroll to
+        pan · Alt/pinch to zoom (anchored) · scrollbar drag (ends to zoom)
       </p>
     </ViewPort>
+  );
+}
+
+// Lives inside <ViewPort>, so useAxis resolves here at render — the ensureVisible
+// button can then call it from a handler. Exercises ZoomSlider + scrollTo/ensureVisible.
+function Controls(props: {
+  sensitivity: number;
+  setSensitivity: (n: number) => void;
+  invert: boolean;
+  setInvert: (b: boolean) => void;
+}) {
+  const axis = useAxis("horizontal");
+  const labelStyle = {
+    display: "flex",
+    "align-items": "center",
+    gap: "6px",
+    "font-size": "12px",
+    color: "#aaa",
+  } as const;
+  return (
+    <div style={{ display: "flex", "align-items": "center", gap: "12px", "flex-wrap": "wrap" }}>
+      <label style={labelStyle}>
+        zoom <ZoomSlider class="demo-zoom-slider" style={{ width: "160px" }} />
+      </label>
+      <label style={labelStyle}>
+        sensitivity
+        <input
+          class="demo-sensitivity"
+          type="range"
+          min="0.25"
+          max="10"
+          step="0.25"
+          value={props.sensitivity}
+          onInput={(e) => props.setSensitivity(e.currentTarget.valueAsNumber)}
+        />
+      </label>
+      <label style={labelStyle}>
+        <input
+          class="demo-invert"
+          type="checkbox"
+          checked={props.invert}
+          onChange={(e) => props.setInvert(e.currentTarget.checked)}
+        />
+        invert
+      </label>
+      <button class="demo-scrollto" onClick={() => axis.ensureVisible(8000, 100, 200)}>
+        reveal tick 8000
+      </button>
+    </div>
   );
 }
 

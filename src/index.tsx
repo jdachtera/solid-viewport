@@ -18,3 +18,7 @@ export type { VirtualListProps } from "./VirtualList";
 export { default as ScrollContainer } from "./ScrollContainer";
 export type { WheelAction, WheelBehavior } from "./ScrollContainer";
 export { default as ScrollBar } from "./ScrollBar";
+export { ZoomSlider } from "./ZoomSlider";
+
+export { createElementSize } from "./createElementSize";
+export type { Size } from "./createElementSize";

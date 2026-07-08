@@ -55,7 +55,7 @@ const ScrollBar = (props: {
     axis().onPositionChange?.(amount * axis().maxPosition());
   };
 
-  const handleMouseMove = (event: MouseEvent) => {
+  const handlePointerMove = (event: PointerEvent) => {
     if (!ref) return;
 
     if (dragHandle()) {
@@ -88,15 +88,18 @@ const ScrollBar = (props: {
     }
   };
 
-  onMount(() => window.addEventListener("mousemove", handleMouseMove));
-  onCleanup(() => window.removeEventListener("mousemove", handleMouseMove));
+  onMount(() => window.addEventListener("pointermove", handlePointerMove));
+  onCleanup(() => window.removeEventListener("pointermove", handlePointerMove));
 
-  const handleMouseDown = (event: MouseEvent) => {
+  const handlePointerDown = (event: PointerEvent) => {
     if (!ref) return;
     const rect = ref.getBoundingClientRect();
     const start = props.direction === "horizontal" ? rect.left : rect.top;
     const inThumb = parallelOf(event) - start;
 
+    // Capture so the drag keeps tracking even if the pointer (finger/mouse) leaves
+    // the thin bar — the same reason we listen on window, now touch-capable.
+    ref.setPointerCapture?.(event.pointerId);
     setGrab(inThumb);
     setStartSize(size());
     setStartOffset(offset());
@@ -106,9 +109,9 @@ const ScrollBar = (props: {
 
     const up = () => {
       setDragHandle(undefined);
-      window.removeEventListener("mouseup", up);
+      window.removeEventListener("pointerup", up);
     };
-    window.addEventListener("mouseup", up);
+    window.addEventListener("pointerup", up);
   };
 
   const cursors: Record<string, string> = {
@@ -139,11 +142,12 @@ const ScrollBar = (props: {
         position: "absolute",
         "border-radius": "8px",
         background: "#666",
+        "touch-action": "none",
         ...(props.direction === "horizontal"
           ? { bottom: 0, height: "12px", width: `${size()}px`, left: `${offset()}px` }
           : { right: 0, width: "12px", height: `${size()}px`, top: `${offset()}px` }),
       }}
-      onMouseDown={handleMouseDown}
+      onPointerDown={handlePointerDown}
     />
   );
 };
