@@ -2,6 +2,22 @@ import { createEffect, ParentProps, Ref } from "solid-js";
 import { ViewPortAxis } from "./createViewPortAxis";
 import { useAxes } from "./ViewPort";
 
+// The container scrolls natively (for trackpad/momentum panning) but the visible
+// scroll control is the custom <ScrollBar>. Hide the native scrollbar chrome so the
+// two don't overlap and so `overflow: scroll` doesn't reserve gutter space that
+// would make the viewport narrower than the axis pixelSize.
+const SCROLL_CLASS = "sv-scroll-container";
+let styleInjected = false;
+function ensureScrollbarHidden() {
+  if (styleInjected || typeof document === "undefined") return;
+  styleInjected = true;
+  const style = document.createElement("style");
+  style.textContent =
+    `.${SCROLL_CLASS}{scrollbar-width:none;-ms-overflow-style:none;}` +
+    `.${SCROLL_CLASS}::-webkit-scrollbar{width:0;height:0;display:none;}`;
+  document.head.appendChild(style);
+}
+
 // A synthetic scroll+zoom surface driven by ViewPort axes. Unlike `VirtualList`
 // (which rides real DOM scroll), this OWNS the scroll: it sizes an inner div to
 // zoom * pixelSize so the native scrollbar has room, maps scroll offset -> axis
@@ -23,6 +39,7 @@ const ScrollContainer = (
 ) => {
   let content: HTMLDivElement | undefined;
   let didUpdateScroll = false;
+  ensureScrollbarHidden();
 
   // Resolve axes here, during render, where the reactive owner (and thus the
   // ViewPort context) exists. Event handlers run WITHOUT an owner, so calling
@@ -106,6 +123,7 @@ const ScrollContainer = (
   return (
     <div
       ref={props.ref}
+      class={SCROLL_CLASS}
       style={{
         height: "100%",
         width: "100%",
