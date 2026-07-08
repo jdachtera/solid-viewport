@@ -1,6 +1,6 @@
 import { createEffect, ParentProps, Ref } from "solid-js";
 import { ViewPortAxis } from "./createViewPortAxis";
-import { useAxis } from "./ViewPort";
+import { useAxes } from "./ViewPort";
 
 // A synthetic scroll+zoom surface driven by ViewPort axes. Unlike `VirtualList`
 // (which rides real DOM scroll), this OWNS the scroll: it sizes an inner div to
@@ -24,20 +24,14 @@ const ScrollContainer = (
   let content: HTMLDivElement | undefined;
   let didUpdateScroll = false;
 
-  const h = (): ViewPortAxis | undefined => {
-    try {
-      return useAxis(props.horizontalAxis ?? "horizontal");
-    } catch {
-      return undefined;
-    }
-  };
-  const v = (): ViewPortAxis | undefined => {
-    try {
-      return useAxis(props.verticalAxis ?? "vertical");
-    } catch {
-      return undefined;
-    }
-  };
+  // Resolve axes here, during render, where the reactive owner (and thus the
+  // ViewPort context) exists. Event handlers run WITHOUT an owner, so calling
+  // useAxis() inside them would read the empty default context and find nothing.
+  const axes = useAxes();
+  const h = (): ViewPortAxis | undefined =>
+    axes.find((a) => a.name === (props.horizontalAxis ?? "horizontal"));
+  const v = (): ViewPortAxis | undefined =>
+    axes.find((a) => a.name === (props.verticalAxis ?? "vertical"));
 
   const handleScroll = (event: { currentTarget: HTMLDivElement }) => {
     if (didUpdateScroll) {
