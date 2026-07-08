@@ -87,9 +87,20 @@ export default function createViewPortAxis(getState: () => AxisState) {
       ...s,
       minZoom,
       maxZoom,
-      onPositionChange: (position: number) =>
-        s.onPositionChange?.(clamp(position, 0, maxPosition())),
-      onZoomChange: (zoom: number) => s.onZoomChange?.(clamp(zoom, minZoom, maxZoom)),
+      // Clamp against LIVE state, not this snapshot. During a wheel handler the
+      // caller sets zoom then position in the same tick; the reactive rebuild
+      // hasn't run yet, so a snapshot maxPosition() would still reflect the old
+      // zoom and clip an anchored position. Reading getState() sees the just-set
+      // zoom signal synchronously.
+      onPositionChange: (position: number) => {
+        const live = getState();
+        const max = Math.max(0, live.range - live.range / live.zoom);
+        live.onPositionChange?.(clamp(position, 0, max));
+      },
+      onZoomChange: (zoom: number) => {
+        const live = getState();
+        live.onZoomChange?.(clamp(zoom, live.minZoom ?? 1, live.maxZoom ?? Infinity));
+      },
       toPixels,
       toPixelOffset,
       toPosition,

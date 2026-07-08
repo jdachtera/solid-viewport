@@ -10,6 +10,40 @@ const WHEEL_LINE_PX = 16;
 const WHEEL_MAX_PX = 120;
 const WHEEL_ZOOM_K = 0.0015;
 
+// What a wheel event should do. `axis` optionally pins the action to a named axis;
+// otherwise it's inferred from the dominant delta (falling back to whichever axis
+// exists, so a 1-D surface responds to a plain mouse wheel).
+export type WheelAction = { type: "zoom" | "scroll" | "none"; axis?: string };
+// A preset name or a resolver that decides per event (e.g. modifier-based).
+export type WheelBehavior =
+  | "alt-zoom" // default: Alt/Option — or ctrl (Mac trackpad pinch) — zooms; else scrolls
+  | "zoom" // always zoom
+  | "scroll" // always scroll
+  | "none" // ignore the wheel
+  | ((event: WheelEvent) => WheelAction);
+
+function resolveWheel(behavior: WheelBehavior | undefined, event: WheelEvent): WheelAction {
+  if (typeof behavior === "function") return behavior(event);
+  switch (behavior) {
+    case "zoom":
+      return { type: "zoom" };
+    case "scroll":
+      return { type: "scroll" };
+    case "none":
+      return { type: "none" };
+    case "alt-zoom":
+    default:
+      return event.altKey || event.ctrlKey ? { type: "zoom" } : { type: "scroll" };
+  }
+}
+
+// Wheel delta -> px, normalizing the three deltaModes (pixel/line/page).
+function wheelPx(delta: number, deltaMode: number, pageSize: number) {
+  if (deltaMode === 1) return delta * WHEEL_LINE_PX; // lines
+  if (deltaMode === 2) return delta * pageSize; // pages
+  return delta; // pixels
+}
+
 // The container scrolls natively (for trackpad/momentum panning) but the visible
 // scroll control is the custom <ScrollBar>. Hide the native scrollbar chrome so the
 // two don't overlap and so `overflow: scroll` doesn't reserve gutter space that
@@ -39,10 +73,10 @@ const ScrollContainer = (
     ref?: Ref<HTMLDivElement>;
     horizontalAxis?: string;
     verticalAxis?: string;
-    // When wheel scrolling zooms instead of pans. "alt" (default) = only while the
-    // Alt/Option key is held (plain wheel pans natively); "always" = every wheel
-    // event zooms; "never" = wheel never zooms.
-    wheelZoom?: "alt" | "always" | "never";
+    // How the wheel behaves. A preset ("alt-zoom" default | "zoom" | "scroll" |
+    // "none") or a resolver `(event) => { type, axis? }` for full control (e.g.
+    // shift for horizontal, a modifier for zoom). See WheelBehavior.
+    wheel?: WheelBehavior;
   }>,
 ) => {
   let content: HTMLDivElement | undefined;
@@ -76,25 +110,74 @@ const ScrollContainer = (
     }
   };
 
+  // Scroll one axis by a pixel delta, in that axis's value units.
+  const scrollAxis = (axis: ViewPortAxis, deltaPx: number) => {
+    if (!deltaPx) return false;
+    const perPx = axis.visibleRange() / axis.pixelSize;
+    axis.onPositionChange?.(axis.position + deltaPx * perPx);
+    return true;
+  };
+
+  // Zoom one axis, anchored on the pointer: the value under the cursor stays under
+  // the cursor. Read it before zooming, then choose the position that restores it at
+  // the new zoom.
+  const zoomAxis = (axis: ViewPortAxis, deltaPx: number, pointerScreen: number, isH: boolean) => {
+    const d = clamp(deltaPx, -WHEEL_MAX_PX, WHEEL_MAX_PX);
+    const rect = zoomRect;
+    const pointerPx = pointerScreen - (isH ? rect.left : rect.top);
+    const valueAtPointer = axis.toPosition(pointerPx);
+    const newZoom = clamp(axis.zoom * Math.exp(-d * WHEEL_ZOOM_K), axis.minZoom, axis.maxZoom);
+    const newVisibleRange = axis.range / newZoom;
+    axis.onZoomChange?.(newZoom);
+    axis.onPositionChange?.(
+      valueAtPointer - ((pointerPx - axis.pixelOffset) / axis.pixelSize) * newVisibleRange,
+    );
+  };
+
+  let zoomRect = { left: 0, top: 0 } as DOMRect;
+
   const handleWheel = (event: WheelEvent) => {
-    const mode = props.wheelZoom ?? "alt";
-    if (mode === "never") return;
-    if (mode === "alt" && !event.altKey) return; // plain wheel = scroll (native)
+    const action = resolveWheel(props.wheel, event);
+    if (action.type === "none") return;
+
     const hv = h();
     const vv = v();
-    // Zoom the axis matching the dominant delta direction, but fall back to
-    // whichever axis exists (a 1-D surface has only one, and a mouse wheel emits
-    // deltaY even when the sole axis is horizontal).
-    const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
-    const axis = (horizontal ? hv : vv) ?? hv ?? vv;
-    if (!axis) return;
-    event.preventDefault();
-    let delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
-    if (event.deltaMode === 1) delta *= WHEEL_LINE_PX; // lines -> px
-    else if (event.deltaMode === 2) delta *= axis.pixelSize; // pages -> px
-    delta = clamp(delta, -WHEEL_MAX_PX, WHEEL_MAX_PX);
-    axis.onZoomChange?.(axis.zoom * Math.exp(-delta * WHEEL_ZOOM_K));
-    axis.onPositionChange?.(Math.min(axis.maxPosition(), axis.position));
+    const byName = (name?: string) => axes.find((a) => a.name === name);
+    // The axis this event targets: an explicit name, else the dominant-delta axis,
+    // falling back to whichever axis exists (1-D surfaces, or a mouse wheel that
+    // only emits deltaY over a horizontal-only axis).
+    const dominantH = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+    const primary = action.axis
+      ? byName(action.axis)
+      : (dominantH ? hv : vv) ?? hv ?? vv;
+    if (!primary) return;
+
+    const dxPx = wheelPx(event.deltaX, event.deltaMode, hv?.pixelSize ?? primary.pixelSize);
+    const dyPx = wheelPx(event.deltaY, event.deltaMode, vv?.pixelSize ?? primary.pixelSize);
+    const dominantPx = Math.abs(dxPx) > Math.abs(dyPx) ? dxPx : dyPx;
+
+    if (action.type === "zoom") {
+      event.preventDefault();
+      zoomRect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+      // Pointer coordinate is chosen by the axis ORIENTATION, not by which delta
+      // dominated: a horizontal axis anchors on clientX even for a vertical wheel.
+      const isH = primary === hv;
+      zoomAxis(primary, dominantPx, isH ? event.clientX : event.clientY, isH);
+      return;
+    }
+
+    // Scroll. Map each delta to its natural axis; if neither mapped (1-D routed the
+    // wrong way, e.g. deltaY over a horizontal axis), push the dominant delta to the
+    // primary axis. preventDefault only when we actually moved something.
+    let moved = false;
+    if (action.axis) {
+      moved = scrollAxis(primary, dominantPx);
+    } else {
+      if (vv) moved = scrollAxis(vv, dyPx) || moved;
+      if (hv) moved = scrollAxis(hv, dxPx) || moved;
+      if (!moved) moved = scrollAxis(primary, dominantPx);
+    }
+    if (moved) event.preventDefault();
   };
 
   // Push axis position/zoom back into the native scroll offset + content size.
