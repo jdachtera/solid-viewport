@@ -8,6 +8,7 @@ import {
   VirtualList,
   ZoomSlider,
 } from "../src";
+import type { WheelBehavior } from "../src";
 
 // 50k rows with varied heights, to show that windowing keeps the DOM tiny.
 const ROWS = Array.from({ length: 50_000 }, (_, i) => ({
@@ -75,6 +76,7 @@ function ZoomDemo() {
   const [zoom, setZoom] = createSignal(1);
   const [sensitivity, setSensitivity] = createSignal(1);
   const [invert, setInvert] = createSignal(false);
+  const [wheelMode, setWheelMode] = createSignal<WheelBehavior>("alt-zoom");
   const RANGE = 10_000;
 
   // Measured pixelSize via the library helper (gap #3) instead of a hand-rolled RO.
@@ -104,8 +106,8 @@ function ZoomDemo() {
         data-zoom={zoom()}
         style={{ position: "relative", height: "120px", border: "1px solid #333", "border-radius": "6px" }}
       >
-        {/* zoomSensitivity + invertZoom (gap #1) wired to demo controls below. */}
-        <ScrollContainer zoomSensitivity={sensitivity()} invertZoom={invert()}>
+        {/* wheel mode + zoomSensitivity + invertZoom wired to demo controls below. */}
+        <ScrollContainer wheel={wheelMode()} zoomSensitivity={sensitivity()} invertZoom={invert()}>
           <Ticks />
         </ScrollContainer>
         <ScrollBar direction="horizontal" />
@@ -115,10 +117,12 @@ function ZoomDemo() {
         setSensitivity={setSensitivity}
         invert={invert()}
         setInvert={setInvert}
+        wheelMode={wheelMode()}
+        setWheelMode={setWheelMode}
       />
       <p class="demo-caption" style={{ color: "#888", "font-size": "12px" }}>
-        pos {position().toFixed(0)} · zoom {zoom().toFixed(1)}× · sens {sensitivity()} · scroll to
-        pan · Alt/pinch to zoom (anchored) · scrollbar drag (ends to zoom)
+        pos {position().toFixed(0)} · zoom {zoom().toFixed(1)}× · sens {sensitivity()} · mode{" "}
+        {String(wheelMode())} · anchored on the cursor · scrollbar drag (ends to zoom)
       </p>
     </ViewPort>
   );
@@ -131,6 +135,8 @@ function Controls(props: {
   setSensitivity: (n: number) => void;
   invert: boolean;
   setInvert: (b: boolean) => void;
+  wheelMode: WheelBehavior;
+  setWheelMode: (m: WheelBehavior) => void;
 }) {
   const axis = useAxis("horizontal");
   const labelStyle = {
@@ -142,6 +148,18 @@ function Controls(props: {
   } as const;
   return (
     <div style={{ display: "flex", "align-items": "center", gap: "12px", "flex-wrap": "wrap" }}>
+      <label style={labelStyle}>
+        wheel
+        <select
+          class="demo-wheel"
+          value={String(props.wheelMode)}
+          onChange={(e) => props.setWheelMode(e.currentTarget.value as WheelBehavior)}
+        >
+          <option value="alt-zoom">alt-zoom (Alt/pinch zooms)</option>
+          <option value="zoom">zoom (no key)</option>
+          <option value="scroll">scroll only</option>
+        </select>
+      </label>
       <label style={labelStyle}>
         zoom <ZoomSlider class="demo-zoom-slider" style={{ width: "160px" }} />
       </label>

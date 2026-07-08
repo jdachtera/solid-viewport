@@ -212,6 +212,27 @@ with sync_playwright() as p:
     check("ensureVisible reveals an off-screen value", off_before and on_after,
           f"off_before={off_before}, pos {pos_ev:.0f}->{pos_ev2:.0f}, range {vr2:.0f}")
 
+    # Wheel mode "zoom": plain wheel (no modifier) zooms.
+    b, c = fresh_strip()
+    page.query_selector(".demo-wheel").select_option("zoom")
+    page.wait_for_timeout(40)
+    page.mouse.move(*c)
+    page.mouse.wheel(0, -120)  # NO Alt held
+    page.wait_for_timeout(60)
+    _, z_nokey = strip_state(page)
+    check("wheel mode 'zoom' zooms without a modifier", z_nokey > 1.02, f"zoom={z_nokey:.3f}")
+    # And "scroll" mode never zooms even with Alt.
+    b, c = fresh_strip()
+    page.query_selector(".demo-wheel").select_option("scroll")
+    page.wait_for_timeout(40)
+    page.keyboard.down("Alt")
+    page.mouse.move(*c)
+    page.mouse.wheel(0, -120)
+    page.keyboard.up("Alt")
+    page.wait_for_timeout(60)
+    _, z_scrollonly = strip_state(page)
+    check("wheel mode 'scroll' never zooms", abs(z_scrollonly - 1) < 1e-6, f"zoom={z_scrollonly:.3f}")
+
     # ScrollBar responds to a touch (pointer) drag, not just mouse.
     b, c = fresh_strip()
     alt_notch(c, n=6)
