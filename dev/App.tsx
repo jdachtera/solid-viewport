@@ -16,7 +16,16 @@ function ListDemo() {
     setTimeout(() => setReady((s) => new Set(s).add(id)), 250 + (id % 7) * 60);
 
   return (
-    <div style={{ height: "360px", overflow: "auto", border: "1px solid #333", "border-radius": "6px" }}>
+    <div
+      style={{
+        height: "360px",
+        "overflow-y": "auto",
+        "overflow-x": "hidden",
+        "overscroll-behavior": "contain",
+        border: "1px solid #333",
+        "border-radius": "6px",
+      }}
+    >
       <VirtualList
         items={ROWS}
         itemSize={(r) => r.height}
@@ -34,6 +43,7 @@ function ListDemo() {
         {(r, index) => (
           <div
             style={{
+              "box-sizing": "border-box",
               padding: "6px 10px",
               "border-bottom": "1px solid #222",
               background: index() % 2 ? "#141414" : "#181818",

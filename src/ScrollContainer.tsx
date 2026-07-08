@@ -70,10 +70,12 @@ const ScrollContainer = (
     const vv = v();
     const hv = h();
 
-    const scrollDivHeight = vv ? vv.zoom * vv.pixelSize : vv;
-    const scrollDivWidth = hv ? hv.zoom * hv.pixelSize : hv;
-    if (typeof scrollDivHeight === "number") content.style.height = `${scrollDivHeight}px`;
-    if (typeof scrollDivWidth === "number") content.style.width = `${scrollDivWidth}px`;
+    // An axis that's present sizes its dimension to zoom * pixelSize (the scroll
+    // range). An absent axis fills the viewport (100%) so 1-D use doesn't collapse.
+    const scrollDivHeight = vv ? vv.zoom * vv.pixelSize : undefined;
+    const scrollDivWidth = hv ? hv.zoom * hv.pixelSize : undefined;
+    content.style.height = scrollDivHeight != null ? `${scrollDivHeight}px` : "100%";
+    content.style.width = scrollDivWidth != null ? `${scrollDivWidth}px` : "100%";
 
     let scrollTop: number | undefined;
     let scrollLeft: number | undefined;
@@ -108,15 +110,15 @@ const ScrollContainer = (
       onScroll={handleScroll}
       onWheel={handleWheel}
     >
-      <div ref={content}>
+      <div ref={content} style={{ height: "100%", width: "100%" }}>
         {/* Sticky inner box keeps the content pinned to the viewport while the outer
-            div provides the scroll range. */}
+            div provides the scroll range. An absent axis fills the viewport. */}
         <div
           style={{
             top: 0,
             left: 0,
-            ...(vw() != null ? { height: `${vw()}px` } : {}),
-            ...(hw() != null ? { width: `${hw()}px` } : {}),
+            height: vw() != null ? `${vw()}px` : "100%",
+            width: hw() != null ? `${hw()}px` : "100%",
             position: "sticky",
             overflow: "hidden",
           }}
