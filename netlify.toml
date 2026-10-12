@@ -1,0 +1,10 @@
+# The site is the demo (dev/), which imports the library from ../src directly,
+# so it needs no library build first. Node is pinned because pnpm 10
+# (packageManager in package.json) needs 18.12 or later, and a Netlify site
+# otherwise builds with whatever Node it was created with.
+[build]
+  command = "pnpm build-dev"
+  publish = "dev/dist"
+
+[build.environment]
+  NODE_VERSION = "22"
