@@ -1,4 +1,4 @@
-import { createSignal, Index } from "solid-js";
+import { createSignal, For, Index, JSX } from "solid-js";
 import {
   createElementSize,
   ScrollBar,
@@ -8,34 +8,27 @@ import {
   VirtualList,
   ZoomSlider,
 } from "../src";
-import type { WheelBehavior } from "../src";
+import type { Pinch, WheelBehavior } from "../src";
+import "./App.css";
 
-// 50k rows with varied heights, to show that windowing keeps the DOM tiny.
+// ---------------------------------------------------------------------------
+// VirtualList: 50k rows with varied heights, to show that windowing keeps the DOM
+// tiny. Rows past the first 1000 "stream in" on first sight.
+
 const ROWS = Array.from({ length: 50_000 }, (_, i) => ({
   id: i,
-  label: `Row ${i}`,
+  label: `Row ${i.toLocaleString()}`,
   height: 28 + (i % 5) * 10,
 }));
 
 function ListDemo() {
   const [ready, setReady] = createSignal(new Set<number>());
-  // Pretend rows 0-999 are loaded; the rest "stream in" on first sight.
   const isReady = (r: (typeof ROWS)[number]) => r.id < 1000 || ready().has(r.id);
   const request = (id: number) =>
     setTimeout(() => setReady((s) => new Set(s).add(id)), 250 + (id % 7) * 60);
 
   return (
-    <div
-      class="demo-list-scroll"
-      style={{
-        height: "360px",
-        "overflow-y": "auto",
-        "overflow-x": "hidden",
-        "overscroll-behavior": "contain",
-        border: "1px solid #333",
-        "border-radius": "6px",
-      }}
-    >
+    <div class="demo-list-scroll">
       <VirtualList
         class="demo-list"
         items={ROWS}
@@ -44,24 +37,13 @@ function ListDemo() {
         ready={isReady}
         fallback={(r) => {
           request(r.id);
-          return (
-            <div class="demo-row" style={{ padding: "6px 10px", color: "#666", "font-style": "italic" }}>
-              loading {r.label}…
-            </div>
-          );
+          return <div class="demo-row demo-row-loading">loading {r.label}…</div>;
         }}
       >
         {(r, index) => (
-          <div
-            class="demo-row"
-            style={{
-              "box-sizing": "border-box",
-              padding: "6px 10px",
-              "border-bottom": "1px solid #222",
-              background: index() % 2 ? "#141414" : "#181818",
-            }}
-          >
-            {r.label} · {r.height}px
+          <div class="demo-row" classList={{ "demo-row-alt": index() % 2 === 1 }}>
+            <span>{r.label}</span>
+            <span class="muted">{r.height}px</span>
           </div>
         )}
       </VirtualList>
@@ -69,8 +51,9 @@ function ListDemo() {
   );
 }
 
-// A synthetic zoom/pan axis: 10,000 ticks laid out horizontally, only the visible
-// ones rendered. Alt+wheel or drag the scrollbar ends to zoom.
+// ---------------------------------------------------------------------------
+// One axis: 10,000 ticks laid out horizontally, only the visible ones rendered.
+
 function ZoomDemo() {
   const [position, setPosition] = createSignal(0);
   const [zoom, setZoom] = createSignal(1);
@@ -79,7 +62,6 @@ function ZoomDemo() {
   const [wheelMode, setWheelMode] = createSignal<WheelBehavior>("alt-zoom");
   const RANGE = 10_000;
 
-  // Measured pixelSize via the library helper (gap #3) instead of a hand-rolled RO.
   let stripEl: HTMLDivElement | undefined;
   const size = createElementSize(() => stripEl);
 
@@ -101,12 +83,10 @@ function ZoomDemo() {
     >
       <div
         ref={stripEl}
-        class="demo-strip"
+        class="demo-strip stage"
         data-pos={position()}
         data-zoom={zoom()}
-        style={{ position: "relative", height: "120px", border: "1px solid #333", "border-radius": "6px" }}
       >
-        {/* wheel mode + zoomSensitivity + invertZoom wired to demo controls below. */}
         <ScrollContainer wheel={wheelMode()} zoomSensitivity={sensitivity()} invertZoom={invert()}>
           <Ticks />
         </ScrollContainer>
@@ -120,16 +100,17 @@ function ZoomDemo() {
         wheelMode={wheelMode()}
         setWheelMode={setWheelMode}
       />
-      <p class="demo-caption" style={{ color: "#888", "font-size": "12px" }}>
-        pos {position().toFixed(0)} · zoom {zoom().toFixed(1)}× · sens {sensitivity()} · mode{" "}
-        {String(wheelMode())} · anchored on the cursor · scrollbar drag (ends to zoom)
+      <p class="demo-caption stats">
+        <Stat label="position" value={position().toFixed(0)} />
+        <Stat label="zoom" value={`${zoom().toFixed(1)}×`} />
+        <Stat label="visible" value={`${(RANGE / zoom()).toFixed(0)} ticks`} />
       </p>
     </ViewPort>
   );
 }
 
-// Lives inside <ViewPort>, so useAxis resolves here at render — the ensureVisible
-// button can then call it from a handler. Exercises ZoomSlider + scrollTo/ensureVisible.
+// Lives inside <ViewPort>, so useAxis resolves here at render and the button can
+// call it from a handler.
 function Controls(props: {
   sensitivity: number;
   setSensitivity: (n: number) => void;
@@ -139,33 +120,27 @@ function Controls(props: {
   setWheelMode: (m: WheelBehavior) => void;
 }) {
   const axis = useAxis("horizontal");
-  const labelStyle = {
-    display: "flex",
-    "align-items": "center",
-    gap: "6px",
-    "font-size": "12px",
-    color: "#aaa",
-  } as const;
   return (
-    <div style={{ display: "flex", "align-items": "center", gap: "12px", "flex-wrap": "wrap" }}>
-      <label style={labelStyle}>
-        wheel
+    <div class="controls">
+      <label class="control">
+        <span>Wheel</span>
         <select
           class="demo-wheel"
           value={String(props.wheelMode)}
           onChange={(e) => props.setWheelMode(e.currentTarget.value as WheelBehavior)}
         >
-          <option value="alt-zoom">alt-zoom (Alt/pinch zooms)</option>
-          <option value="zoom">zoom (no key)</option>
-          <option value="zoom-pan">zoom-pan (Y zooms, X pans)</option>
+          <option value="alt-zoom">alt-zoom — Alt or pinch zooms</option>
+          <option value="zoom">zoom — always zooms</option>
+          <option value="zoom-pan">zoom-pan — Y zooms, X pans</option>
           <option value="scroll">scroll only</option>
         </select>
       </label>
-      <label style={labelStyle}>
-        zoom <ZoomSlider class="demo-zoom-slider" style={{ width: "160px" }} />
+      <label class="control">
+        <span>Zoom</span>
+        <ZoomSlider class="demo-zoom-slider" />
       </label>
-      <label style={labelStyle}>
-        sensitivity
+      <label class="control">
+        <span>Sensitivity — {props.sensitivity}×</span>
         <input
           class="demo-sensitivity"
           type="range"
@@ -176,17 +151,17 @@ function Controls(props: {
           onInput={(e) => props.setSensitivity(e.currentTarget.valueAsNumber)}
         />
       </label>
-      <label style={labelStyle}>
+      <label class="control check">
         <input
           class="demo-invert"
           type="checkbox"
           checked={props.invert}
           onChange={(e) => props.setInvert(e.currentTarget.checked)}
         />
-        invert
+        <span>Invert zoom</span>
       </label>
-      <button class="demo-scrollto" onClick={() => axis.ensureVisible(8000, 100, 200)}>
-        reveal tick 8000
+      <button class="demo-scrollto button" onClick={() => axis.ensureVisible(8000, 100, 200)}>
+        Reveal tick 8000
       </button>
     </div>
   );
@@ -201,16 +176,11 @@ function Ticks() {
         const dims = () => axis.dimensions(i(), 1);
         return (
           <span
+            class="tick"
+            classList={{ "tick-major": i() % 10 === 0 }}
             style={{
               display: axis.isVisible({ offset: dims().offset, size: 40 }) ? "block" : "none",
-              position: "absolute",
               left: `${dims().offset}px`,
-              top: 0,
-              bottom: 0,
-              "border-left": i() % 10 === 0 ? "1px solid #6df" : "1px solid #333",
-              "padding-left": "3px",
-              color: "#888",
-              "font-size": "10px",
             }}
           >
             {i() % 10 === 0 ? i() : ""}
@@ -221,31 +191,258 @@ function Ticks() {
   );
 }
 
-export default function App() {
+// ---------------------------------------------------------------------------
+// Two axes: a timeline of 64 bars by 24 lanes, with a bar ruler pinned above the
+// lanes (verticalInset) and pinch zoom on either or both axes.
+
+const BARS = 64;
+const LANES = 24;
+const RULER = 28;
+const CLIPS = (() => {
+  // Deterministic pseudo-random clips so the demo looks the same every load.
+  let seed = 7;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  return Array.from({ length: 220 }, (_, id) => {
+    const lane = Math.floor(rand() * LANES);
+    const start = Math.floor(rand() * (BARS - 2) * 4) / 4;
+    const length = 0.5 + Math.floor(rand() * 8) / 2;
+    return { id, lane, start, length: Math.min(length, BARS - start), hue: (lane * 37) % 360 };
+  });
+})();
+
+function TimelineDemo() {
+  const [x, setX] = createSignal({ position: 0, zoom: 4 });
+  const [y, setY] = createSignal({ position: 0, zoom: 1.5 });
+  const [pinch, setPinch] = createSignal<Pinch>("both");
+
+  let stageEl: HTMLDivElement | undefined;
+  const size = createElementSize(() => stageEl);
+
   return (
-    <div
-      style={{
-        "font-family": "system-ui, sans-serif",
-        color: "#ddd",
-        background: "#0e0e0e",
-        "min-height": "100vh",
-        padding: "24px",
-        display: "flex",
-        "flex-direction": "column",
-        gap: "24px",
-        "max-width": "900px",
-        margin: "0 auto",
+    <ViewPort
+      axes={{
+        horizontal: () => ({
+          position: x().position,
+          range: BARS,
+          pixelOffset: 0,
+          pixelSize: size().width || 800,
+          zoom: x().zoom,
+          minZoom: 1,
+          maxZoom: 32,
+          onPositionChange: (position) => setX((s) => ({ ...s, position })),
+          onZoomChange: (zoom) => setX((s) => ({ ...s, zoom })),
+        }),
+        vertical: () => ({
+          position: y().position,
+          range: LANES,
+          pixelOffset: RULER,
+          pixelSize: Math.max(1, (size().height || 320) - RULER),
+          zoom: y().zoom,
+          minZoom: 1,
+          maxZoom: 6,
+          onPositionChange: (position) => setY((s) => ({ ...s, position })),
+          onZoomChange: (zoom) => setY((s) => ({ ...s, zoom })),
+        }),
       }}
     >
-      <h1 style={{ "font-size": "20px" }}>solid-viewport</h1>
-      <section>
-        <h2 style={{ "font-size": "14px", color: "#6df" }}>VirtualList — 50k rows, async deferred</h2>
+      <div ref={stageEl} class="demo-timeline stage">
+        <ScrollContainer verticalInset={RULER} pinch={pinch()}>
+          <Ruler />
+          <Lanes />
+        </ScrollContainer>
+        <ScrollBar direction="horizontal" />
+        <ScrollBar direction="vertical" />
+      </div>
+      <div class="controls">
+        <div class="control">
+          <span>Pinch zooms</span>
+          <Segmented
+            value={String(pinch())}
+            options={[
+              ["both", "Both"],
+              ["horizontal", "Time"],
+              ["vertical", "Lanes"],
+              ["false", "Off"],
+            ]}
+            onChange={(v) => setPinch(v === "false" ? false : (v as Pinch))}
+          />
+        </div>
+        <button
+          class="button"
+          onClick={() => {
+            setX({ position: 0, zoom: 1 });
+            setY({ position: 0, zoom: 1 });
+          }}
+        >
+          Fit all
+        </button>
+      </div>
+      <p class="stats">
+        <Stat label="bars" value={`${x().position.toFixed(1)} – ${(x().position + BARS / x().zoom).toFixed(1)}`} />
+        <Stat label="time zoom" value={`${x().zoom.toFixed(1)}×`} />
+        <Stat label="lane zoom" value={`${y().zoom.toFixed(1)}×`} />
+      </p>
+    </ViewPort>
+  );
+}
+
+// The bar numbers, pinned in the inset above the lanes.
+function Ruler() {
+  const h = useAxis("horizontal");
+  return (
+    <div class="ruler" style={{ height: `${RULER}px` }}>
+      <Index each={Array.from({ length: BARS }, (_, i) => i)}>
+        {(bar) => {
+          const dims = () => h.dimensions(bar(), 1);
+          return (
+            <span
+              class="ruler-bar"
+              style={{
+                display: h.isVisible(dims()) ? "block" : "none",
+                left: `${dims().offset}px`,
+                width: `${dims().size}px`,
+              }}
+            >
+              {bar() + 1}
+            </span>
+          );
+        }}
+      </Index>
+    </div>
+  );
+}
+
+function Lanes() {
+  const h = useAxis("horizontal");
+  const v = useAxis("vertical");
+  return (
+    <div class="lanes" style={{ top: `${RULER}px` }}>
+      <Index each={Array.from({ length: LANES }, (_, i) => i)}>
+        {(lane) => {
+          const dims = () => v.dimensions(lane(), 1);
+          return (
+            <div
+              class="lane"
+              classList={{ "lane-alt": lane() % 2 === 1 }}
+              style={{
+                display: v.isVisible(dims()) ? "block" : "none",
+                top: `${dims().offset}px`,
+                height: `${dims().size}px`,
+              }}
+            />
+          );
+        }}
+      </Index>
+      <For each={CLIPS}>
+        {(clip) => {
+          const hd = () => h.dimensions(clip.start, clip.length);
+          const vd = () => v.dimensions(clip.lane, 1);
+          return (
+            <div
+              class="clip"
+              style={{
+                display: h.isVisible(hd()) && v.isVisible(vd()) ? "block" : "none",
+                left: `${hd().offset}px`,
+                width: `${hd().size}px`,
+                top: `${vd().offset + 2}px`,
+                height: `${Math.max(0, vd().size - 4)}px`,
+                "--clip-hue": String(clip.hue),
+              }}
+            />
+          );
+        }}
+      </For>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function Stat(props: { label: string; value: string }) {
+  return (
+    <span class="stat">
+      <span class="muted">{props.label}</span> <span class="mono">{props.value}</span>
+    </span>
+  );
+}
+
+function Segmented(props: {
+  value: string;
+  options: [string, string][];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div class="segmented">
+      <For each={props.options}>
+        {([value, label]) => (
+          <button
+            class="seg"
+            classList={{ "seg-active": props.value === value }}
+            onClick={() => props.onChange(value)}
+          >
+            {label}
+          </button>
+        )}
+      </For>
+    </div>
+  );
+}
+
+function Panel(props: { title: string; hint: JSX.Element; children: JSX.Element }) {
+  return (
+    <section class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title">{props.title}</h2>
+        <span class="panel-hint">{props.hint}</span>
+      </div>
+      {props.children}
+    </section>
+  );
+}
+
+export default function App() {
+  return (
+    <div class="app">
+      <header class="header">
+        <h1 class="title">Solid Viewport</h1>
+        <p class="subtitle">
+          One viewport core for scrollable &amp; zoomable content in SolidJS — virtual lists,
+          timelines, waveforms, piano rolls.
+        </p>
+      </header>
+
+      <Panel
+        title="VirtualList"
+        hint="50,000 rows of varied height, rendered in a window; rows past 1,000 load on first sight"
+      >
         <ListDemo />
-      </section>
-      <section>
-        <h2 style={{ "font-size": "14px", color: "#6df" }}>ScrollContainer + ScrollBar — zoom/pan axis</h2>
+      </Panel>
+
+      <Panel
+        title="ScrollContainer + ScrollBar · one axis"
+        hint="10,000 ticks · wheel per the mode below · drag the scrollbar's ends to zoom"
+      >
         <ZoomDemo />
-      </section>
+      </Panel>
+
+      <Panel
+        title="Two axes · ruler inset · pinch"
+        hint="64 bars × 24 lanes · Alt+wheel zooms one axis, a trackpad or touch pinch zooms per the setting"
+      >
+        <TimelineDemo />
+      </Panel>
+
+      <footer class="footer">
+        <a href="https://github.com/jdachtera/solid-viewport" target="_blank">
+          GitHub
+        </a>
+        <a href="https://www.npmjs.com/package/solid-viewport" target="_blank">
+          npm
+        </a>
+        <span class="muted footer-note">
+          Used by solid-waveform and solid-pianoroll
+        </span>
+      </footer>
     </div>
   );
 }
