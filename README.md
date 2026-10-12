@@ -99,7 +99,7 @@ const dims = () => axis.dimensions(note.start, note.length); // { offset, size }
 
 ## Touch, layout and look
 
-- `pinch` (default true) — two fingers zoom each axis by their spread along it, and the content under them follows as they move, so a two-finger drag pans.
+- `pinch` — which axes a pinch zooms, by touch or trackpad: `true` / `"both"` (default), `"horizontal"`, `"vertical"`, or `false`. On touch, two fingers zoom each axis by their spread along it and the content under them follows as they move, so a two-finger drag pans.
 - `verticalInset` — px of fixed content at the top of the box, above the vertical axis's own area (e.g. a time ruler over a piano roll's notes).
 - `nativeScrollbars` (default false) — show the browser's scrollbars instead of hiding them for `<ScrollBar>`.
 - `class` / `style` — passed to the scrolling element.

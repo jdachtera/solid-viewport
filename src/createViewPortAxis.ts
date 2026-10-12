@@ -1,4 +1,4 @@
-import { createEffect } from "solid-js";
+import { createComputed } from "solid-js";
 import { createStore } from "solid-js/store";
 
 export const clamp = (value: number, min: number, max: number) =>
@@ -133,7 +133,10 @@ export default function createViewPortAxis(getState: () => AxisState) {
   };
 
   const [state, setState] = createStore(build());
-  createEffect(() => setState(build()));
+  // A computation, not an effect: an effect runs after the render that changed
+  // the state, so every pan or zoom drew once with the old axis and again with
+  // the new one. Computed, the axis is current within the same update.
+  createComputed(() => setState(build()));
 
   return state;
 }

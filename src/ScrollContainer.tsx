@@ -1,4 +1,4 @@
-import { createEffect, JSX, onCleanup, ParentProps, Ref } from "solid-js";
+import { batch, createEffect, JSX, onCleanup, ParentProps, Ref } from "solid-js";
 import { clamp, ViewPortAxis } from "./createViewPortAxis";
 import { useAxes } from "./ViewPort";
 
@@ -44,6 +44,7 @@ function presetActions(
   event: WheelEvent,
   hName: string,
   vName: string,
+  pinchAxes: PinchAxes,
 ): WheelAction[] {
   switch (behavior) {
     case "zoom":
@@ -62,14 +63,27 @@ function presetActions(
       // Chrome, Edge and Firefox deliver a trackpad pinch as a ctrl+wheel carrying
       // one scalar (deltaY), not a spread per axis, so it zooms every bound axis
       // together. An axis the surface doesn't have is skipped.
-      if (event.ctrlKey)
-        return [
-          { type: "zoom", axis: hName, from: "y" },
-          { type: "zoom", axis: vName, from: "y" },
-        ];
+      if (event.ctrlKey) {
+        const zooms: WheelAction[] = [];
+        if (pinchAxes.horizontal) zooms.push({ type: "zoom", axis: hName, from: "y" });
+        if (pinchAxes.vertical) zooms.push({ type: "zoom", axis: vName, from: "y" });
+        return zooms.length ? zooms : [{ type: "zoom" }];
+      }
       return event.altKey ? [{ type: "zoom" }] : [{ type: "scroll" }];
   }
 }
+
+// Which axes a pinch (touch or trackpad) zooms.
+export type PinchAxes = { horizontal: boolean; vertical: boolean };
+export type Pinch = boolean | "both" | "horizontal" | "vertical";
+const pinchAxesOf = (pinch: Pinch | undefined): PinchAxes =>
+  pinch === "horizontal"
+    ? { horizontal: true, vertical: false }
+    : pinch === "vertical"
+    ? { horizontal: false, vertical: true }
+    : pinch === false
+    ? { horizontal: false, vertical: false }
+    : { horizontal: true, vertical: true };
 
 // Wheel delta -> px, normalizing the three deltaModes (pixel/line/page).
 function wheelPx(delta: number, deltaMode: number, pageSize: number) {
@@ -128,9 +142,11 @@ const ScrollContainer = (
     // pan is always used for the 1-D case a native scroll can't reach (e.g. a
     // vertical wheel over a horizontal-only axis).
     momentum?: boolean;
-    // Two-finger touch pinch zooms (each axis by the spread along it) and pans
-    // (the content under the fingers follows them). Default true.
-    pinch?: boolean;
+    // Which axes a pinch zooms: a two-finger touch pinch (each axis by the spread
+    // along it, the content under the fingers following them) and, in "alt-zoom",
+    // a trackpad pinch. true / "both" (default), "horizontal", "vertical", or false
+    // (touch pinch off; a trackpad pinch then zooms the dominant axis).
+    pinch?: Pinch;
     // Show the browser's own scrollbars instead of hiding them for <ScrollBar>.
     // Default false.
     nativeScrollbars?: boolean;
@@ -202,8 +218,12 @@ const ScrollContainer = (
     // Clamped here rather than left to the axis: the position below is worked out
     // from this zoom, so a zoom the axis then refused would leave the anchor drifting.
     const zoom = clamp(newZoom, axis.minZoom, axis.maxZoom);
-    axis.onZoomChange?.(zoom);
-    axis.onPositionChange?.(anchor - fraction * (axis.range / zoom));
+    // One update for both, or the content renders at the new zoom and the old
+    // position before rendering again at the new position.
+    batch(() => {
+      axis.onZoomChange?.(zoom);
+      axis.onPositionChange?.(anchor - fraction * (axis.range / zoom));
+    });
   };
 
   // Wheel zoom on one axis, anchored on the pointer: the value under the cursor stays
@@ -223,12 +243,25 @@ const ScrollContainer = (
     zoomAnchored(axis, axis.zoom * Math.exp(dir * d * k * sens), fraction, anchor);
   };
 
+  // The container's box, read at most once per gesture. Reading it on every wheel
+  // event forced a synchronous layout of everything the previous event had just
+  // moved, which with many children is most of what a zoom step costs. A pause
+  // between events starts a new gesture, which picks up any page scroll since.
+  let cachedRect: DOMRect | undefined;
+  let lastWheelAt = 0;
+  const containerRect = (element: HTMLElement) => {
+    const now = performance.now();
+    if (!cachedRect || now - lastWheelAt > 150) cachedRect = element.getBoundingClientRect();
+    lastWheelAt = now;
+    return cachedRect;
+  };
+
   const handleWheel = (event: WheelEvent) => {
     const behavior = props.wheel ?? "alt-zoom";
     const actions =
       typeof behavior === "function"
         ? ([] as WheelAction[]).concat(behavior(event))
-        : presetActions(behavior, event, hName(), vName());
+        : presetActions(behavior, event, hName(), vName(), pinchAxesOf(props.pinch));
     if (!actions.length) return;
 
     const hv = h();
@@ -251,41 +284,49 @@ const ScrollContainer = (
       }
     };
 
-    for (const action of actions) {
-      if (action.type === "none") continue;
-      const delta = deltaFor(action.from);
-      if (!delta) continue; // this component didn't move
+    // Zooms on several axes (a trackpad pinch) are independent, so they apply as
+    // one update. Anything else runs in order: a zoom-pan's pan reads the position
+    // its zoom just set, which a batch would hold back until the end.
+    const applyAll = actions.every(({ type }) => type === "zoom")
+      ? batch
+      : (fn: () => void) => fn();
+    applyAll(() => {
+      for (const action of actions) {
+        if (action.type === "none") continue;
+        const delta = deltaFor(action.from);
+        if (!delta) continue; // this component didn't move
 
-      // Target axis: explicit name, else the dominant-delta axis, falling back to
-      // whichever exists (1-D surfaces, or a wheel that only emits deltaY over a
-      // horizontal-only axis).
-      const axis = action.axis ? byName(action.axis) : (dominantH ? hv : vv) ?? hv ?? vv;
-      if (!axis) continue;
+        // Target axis: explicit name, else the dominant-delta axis, falling back to
+        // whichever exists (1-D surfaces, or a wheel that only emits deltaY over a
+        // horizontal-only axis).
+        const axis = action.axis ? byName(action.axis) : (dominantH ? hv : vv) ?? hv ?? vv;
+        if (!axis) continue;
 
-      if (action.type === "zoom") {
-        prevent();
-        const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-        // Pointer coord is chosen by axis ORIENTATION, not delta direction: a
-        // horizontal axis anchors on clientX even for a vertical wheel.
-        const isH = axis === hv;
-        zoomAxis(
-          axis,
-          delta,
-          isH ? event.clientX : event.clientY,
-          rect,
-          pinching ? PINCH_ZOOM_K : WHEEL_ZOOM_K,
-        );
-      } else {
-        // Scroll. If the browser can natively scroll this (no explicit axis, a delta
-        // the axis orientation matches) and momentum is on, let native handle it for
-        // trackpad inertia — handleScroll syncs position. Otherwise pan manually.
-        const momentum = props.momentum ?? true;
-        const nativeCanScroll =
-          !action.axis && ((!!event.deltaY && !!vv) || (!!event.deltaX && !!hv));
-        if (momentum && nativeCanScroll && actions.length === 1) continue; // native + sync
-        if (scrollAxis(axis, delta)) prevent();
+        if (action.type === "zoom") {
+          prevent();
+          const rect = containerRect(event.currentTarget as HTMLElement);
+          // Pointer coord is chosen by axis ORIENTATION, not delta direction: a
+          // horizontal axis anchors on clientX even for a vertical wheel.
+          const isH = axis === hv;
+          zoomAxis(
+            axis,
+            delta,
+            isH ? event.clientX : event.clientY,
+            rect,
+            pinching ? PINCH_ZOOM_K : WHEEL_ZOOM_K,
+          );
+        } else {
+          // Scroll. If the browser can natively scroll this (no explicit axis, a delta
+          // the axis orientation matches) and momentum is on, let native handle it for
+          // trackpad inertia — handleScroll syncs position. Otherwise pan manually.
+          const momentum = props.momentum ?? true;
+          const nativeCanScroll =
+            !action.axis && ((!!event.deltaY && !!vv) || (!!event.deltaX && !!hv));
+          if (momentum && nativeCanScroll && actions.length === 1) continue; // native + sync
+          if (scrollAxis(axis, delta)) prevent();
+        }
       }
-    }
+    });
   };
 
   /* Touch pinch.
@@ -317,6 +358,7 @@ const ScrollContainer = (
   };
 
   let rectAtPinch = { left: 0, top: 0 } as DOMRect;
+  let pinchEnabled: PinchAxes = { horizontal: true, vertical: true };
 
   const beginPinch = (element: HTMLElement) => {
     const spread = pointerSpread();
@@ -329,7 +371,10 @@ const ScrollContainer = (
         zoom: axis.zoom,
         anchor: axis.position + fractionAt(axis, mid, rectAtPinch) * axis.visibleRange(),
       };
-    pinchStart = { h: start(h(), spread.x, spread.midX), v: start(v(), spread.y, spread.midY) };
+    pinchStart = {
+      h: pinchEnabled.horizontal ? start(h(), spread.x, spread.midX) : undefined,
+      v: pinchEnabled.vertical ? start(v(), spread.y, spread.midY) : undefined,
+    };
   };
 
   const endPointer = (event: PointerEvent) => {
@@ -345,6 +390,8 @@ const ScrollContainer = (
 
   const handlePointerDown = (event: PointerEvent & { currentTarget: HTMLDivElement }) => {
     if (event.pointerType === "mouse" || props.pinch === false) return;
+    const axesOn = pinchAxesOf(props.pinch);
+    pinchEnabled = axesOn;
     if (activePointers.size === 0) {
       window.addEventListener("pointerup", endPointer);
       window.addEventListener("pointercancel", endPointer);
@@ -371,8 +418,11 @@ const ScrollContainer = (
         pinch.anchor,
       );
     };
-    apply(pinchStart.h, spread.x, spread.midX);
-    apply(pinchStart.v, spread.y, spread.midY);
+    const { h: hPinch, v: vPinch } = pinchStart;
+    batch(() => {
+      apply(hPinch, spread.x, spread.midX);
+      apply(vPinch, spread.y, spread.midY);
+    });
   };
 
   onCleanup(() => {
