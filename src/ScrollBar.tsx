@@ -141,7 +141,8 @@ const ScrollBar = (props: {
         cursor: cursor(),
         position: "absolute",
         "border-radius": "8px",
-        background: "#666",
+        // Themeable from any ancestor; the default is what it always was.
+        background: "var(--sv-scrollbar-thumb, #666)",
         "touch-action": "none",
         ...(props.direction === "horizontal"
           ? { bottom: 0, height: "12px", width: `${size()}px`, left: `${offset()}px` }

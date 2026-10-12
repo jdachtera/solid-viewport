@@ -107,6 +107,10 @@ const dims = () => axis.dimensions(note.start, note.length); // { offset, size }
 
 Pointer anchoring (zoom and pinch) is measured from the container's own box, so an axis's `pixelOffset` may be in container coordinates (`0`) or screen coordinates (an element's client rect).
 
+## Scrollbar colour
+
+`<ScrollBar>` draws its thumb in `var(--sv-scrollbar-thumb, #666)`; set the variable on any ancestor to restyle it.
+
 ## Zoom slider
 
 ```tsx
