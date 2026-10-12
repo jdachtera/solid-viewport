@@ -1,5 +1,7 @@
 # solid-viewport
 
+[Demo](https://solid-viewport.netlify.app/)
+
 One viewport core for scrollable & zoomable content in [Solid](https://www.solidjs.com/) — virtual lists, waveforms, piano rolls, keyboards. It unifies the ad-hoc viewport math that `solid-waveform` and `solid-pianoroll` each reinvented.
 
 ## The idea

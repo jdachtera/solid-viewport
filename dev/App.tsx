@@ -440,7 +440,14 @@ export default function App() {
           npm
         </a>
         <span class="muted footer-note">
-          Used by solid-waveform and solid-pianoroll
+          Used by{" "}
+          <a href="https://solid-waveform.netlify.app/" target="_blank">
+            solid-waveform
+          </a>{" "}
+          and{" "}
+          <a href="https://solid-pianoroll.netlify.app/" target="_blank">
+            solid-pianoroll
+          </a>
         </span>
       </footer>
     </div>
