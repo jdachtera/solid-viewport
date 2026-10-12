@@ -1,4 +1,4 @@
-import { createEffect, ParentProps, Ref } from "solid-js";
+import { createEffect, JSX, onCleanup, ParentProps, Ref } from "solid-js";
 import { clamp, ViewPortAxis } from "./createViewPortAxis";
 import { useAxes } from "./ViewPort";
 
@@ -9,6 +9,13 @@ import { useAxes } from "./ViewPort";
 const WHEEL_LINE_PX = 16;
 const WHEEL_MAX_PX = 120;
 const WHEEL_ZOOM_K = 0.0015;
+// A trackpad pinch arrives as a ctrl+wheel with small pixel deltas (a few px per
+// event, where a mouse notch is ~100), so at the wheel rate it would barely zoom.
+const PINCH_ZOOM_K = 0.01;
+
+// Below this the fingers are close enough that the spread ratio is mostly noise, and
+// a touch pinch that starts there would jump the zoom by a wild factor.
+const MIN_PINCH_SPREAD_PX = 20;
 
 // What a wheel event should do. `axis` optionally pins the action to a named axis
 // (otherwise inferred from the dominant delta, falling back to whichever axis
@@ -23,7 +30,7 @@ export type WheelAction = {
 // A preset name or a resolver that decides per event (e.g. modifier-based). A
 // resolver may return several actions to apply at once.
 export type WheelBehavior =
-  | "alt-zoom" // default: Alt/Option — or ctrl (Mac trackpad pinch) — zooms; else scrolls
+  | "alt-zoom" // default: Alt/Option zooms the dominant axis; ctrl (trackpad pinch) zooms all; else scrolls
   | "zoom" // always zoom (dominant delta)
   | "scroll" // always scroll
   | "zoom-pan" // deltaY zooms + deltaX pans, same axis, no modifier (waveform/pianoroll)
@@ -36,6 +43,7 @@ function presetActions(
   behavior: Exclude<WheelBehavior, Function>,
   event: WheelEvent,
   hName: string,
+  vName: string,
 ): WheelAction[] {
   switch (behavior) {
     case "zoom":
@@ -51,7 +59,15 @@ function presetActions(
       ];
     case "alt-zoom":
     default:
-      return event.altKey || event.ctrlKey ? [{ type: "zoom" }] : [{ type: "scroll" }];
+      // Chrome, Edge and Firefox deliver a trackpad pinch as a ctrl+wheel carrying
+      // one scalar (deltaY), not a spread per axis, so it zooms every bound axis
+      // together. An axis the surface doesn't have is skipped.
+      if (event.ctrlKey)
+        return [
+          { type: "zoom", axis: hName, from: "y" },
+          { type: "zoom", axis: vName, from: "y" },
+        ];
+      return event.altKey ? [{ type: "zoom" }] : [{ type: "scroll" }];
   }
 }
 
@@ -82,13 +98,21 @@ function ensureScrollbarHidden() {
 // (which rides real DOM scroll), this OWNS the scroll: it sizes an inner div to
 // zoom * pixelSize so the native scrollbar has room, maps scroll offset -> axis
 // `position`, and maps axis position back to scrollTo(). Alt+wheel zooms the axis
-// under the pointer's dominant delta. This is the model waveform/pianoroll use —
-// continuous pan/zoom over a large virtual space with `isVisible` windowing inside.
+// under the pointer's dominant delta, a trackpad pinch zooms every axis, and a touch
+// pinch zooms each axis by the finger spread along it. This is the model
+// waveform/pianoroll use — continuous pan/zoom over a large virtual space with
+// `isVisible` windowing inside.
 //
 // Pass the axis names to bind. Either may be omitted for a 1-D surface.
+//
+// Pointer anchoring (wheel zoom, pinch) is worked out from this container's own
+// box, so it holds whatever coordinate space the axis's `pixelOffset` is in — the
+// container's (0) or the screen's (an element's client rect).
 const ScrollContainer = (
   props: ParentProps<{
     ref?: Ref<HTMLDivElement>;
+    class?: string;
+    style?: JSX.CSSProperties;
     horizontalAxis?: string;
     verticalAxis?: string;
     // How the wheel behaves. A preset ("alt-zoom" default | "zoom" | "scroll" |
@@ -104,35 +128,53 @@ const ScrollContainer = (
     // pan is always used for the 1-D case a native scroll can't reach (e.g. a
     // vertical wheel over a horizontal-only axis).
     momentum?: boolean;
+    // Two-finger touch pinch zooms (each axis by the spread along it) and pans
+    // (the content under the fingers follows them). Default true.
+    pinch?: boolean;
+    // Show the browser's own scrollbars instead of hiding them for <ScrollBar>.
+    // Default false.
+    nativeScrollbars?: boolean;
+    // Pixels of fixed content at the top of the visible box, above the vertical
+    // axis's own area — e.g. a time ruler over a piano roll's notes. The visible box
+    // is the axis's pixelSize plus this; the axis maps only its own part.
+    verticalInset?: number;
   }>,
 ) => {
   let content: HTMLDivElement | undefined;
   let didUpdateScroll = false;
   ensureScrollbarHidden();
 
+  const inset = () => props.verticalInset ?? 0;
+
   // Resolve axes here, during render, where the reactive owner (and thus the
   // ViewPort context) exists. Event handlers run WITHOUT an owner, so calling
   // useAxis() inside them would read the empty default context and find nothing.
   const axes = useAxes();
-  const h = (): ViewPortAxis | undefined =>
-    axes.find((a) => a.name === (props.horizontalAxis ?? "horizontal"));
-  const v = (): ViewPortAxis | undefined =>
-    axes.find((a) => a.name === (props.verticalAxis ?? "vertical"));
+  const hName = () => props.horizontalAxis ?? "horizontal";
+  const vName = () => props.verticalAxis ?? "vertical";
+  const h = (): ViewPortAxis | undefined => axes.find((a) => a.name === hName());
+  const v = (): ViewPortAxis | undefined => axes.find((a) => a.name === vName());
+
+  // How far each axis scrolls, in px: exactly what the effect below lays out, so a
+  // scroll and the position it was set from agree. Measured from the DOM instead,
+  // it would also count the inset (and any gutter), and scrolling to the end would
+  // never reach the axis's last values.
+  const scrollRange = (axis: ViewPortAxis) => (axis.zoom - 1) * axis.pixelSize;
 
   const handleScroll = (event: { currentTarget: HTMLDivElement }) => {
     if (didUpdateScroll) {
       didUpdateScroll = false;
       return;
     }
-    const { scrollTop, scrollLeft, scrollWidth, scrollHeight } = event.currentTarget;
+    const { scrollTop, scrollLeft } = event.currentTarget;
     const vv = v();
     const hv = h();
     if (vv) {
-      const denom = scrollHeight - vv.pixelSize;
+      const denom = scrollRange(vv);
       if (denom > 0) vv.onPositionChange?.(vv.maxPosition() * (scrollTop / denom));
     }
     if (hv) {
-      const denom = scrollWidth - hv.pixelSize;
+      const denom = scrollRange(hv);
       if (denom > 0) hv.onPositionChange?.(hv.maxPosition() * (scrollLeft / denom));
     }
   };
@@ -145,33 +187,48 @@ const ScrollContainer = (
     return true;
   };
 
-  // Zoom one axis, anchored on the pointer: the value under the cursor stays under
-  // the cursor. Read it before zooming, then choose the position that restores it at
-  // the new zoom.
-  const zoomAxis = (axis: ViewPortAxis, deltaPx: number, pointerScreen: number, isH: boolean) => {
-    const d = clamp(deltaPx, -WHEEL_MAX_PX, WHEEL_MAX_PX);
-    const rect = zoomRect;
-    const pointerPx = pointerScreen - (isH ? rect.left : rect.top);
-    const valueAtPointer = axis.toPosition(pointerPx);
-    const sens = props.zoomSensitivity && props.zoomSensitivity > 0 ? props.zoomSensitivity : 1;
-    const dir = props.invertZoom ? 1 : -1;
-    const newZoom = clamp(axis.zoom * Math.exp(dir * d * WHEEL_ZOOM_K * sens), axis.minZoom, axis.maxZoom);
-    const newVisibleRange = axis.range / newZoom;
-    axis.onZoomChange?.(newZoom);
-    axis.onPositionChange?.(
-      valueAtPointer - ((pointerPx - axis.pixelOffset) / axis.pixelSize) * newVisibleRange,
-    );
+  // A screen coordinate as a fraction of the axis's visible area (0 = its start
+  // edge, 1 = its end), measured against this container's box.
+  const fractionAt = (axis: ViewPortAxis, pointerScreen: number, rect: DOMRect) => {
+    const start = axis === h() ? rect.left : rect.top + inset();
+    return (pointerScreen - start) / axis.pixelSize;
   };
 
-  let zoomRect = { left: 0, top: 0 } as DOMRect;
+  // Zoom one axis to `newZoom` and put the value `anchor` at `fraction` of the visible
+  // area. With anchor = the value under the pointer now, the pointer stays put; with
+  // the value from the start of a gesture, the same call also pans.
+  const zoomAnchored = (axis: ViewPortAxis, newZoom: number, fraction: number, anchor: number) => {
+    if (!Number.isFinite(newZoom) || newZoom <= 0) return;
+    // Clamped here rather than left to the axis: the position below is worked out
+    // from this zoom, so a zoom the axis then refused would leave the anchor drifting.
+    const zoom = clamp(newZoom, axis.minZoom, axis.maxZoom);
+    axis.onZoomChange?.(zoom);
+    axis.onPositionChange?.(anchor - fraction * (axis.range / zoom));
+  };
+
+  // Wheel zoom on one axis, anchored on the pointer: the value under the cursor stays
+  // under the cursor.
+  const zoomAxis = (
+    axis: ViewPortAxis,
+    deltaPx: number,
+    pointerScreen: number,
+    rect: DOMRect,
+    k: number,
+  ) => {
+    const d = clamp(deltaPx, -WHEEL_MAX_PX, WHEEL_MAX_PX);
+    const fraction = fractionAt(axis, pointerScreen, rect);
+    const anchor = axis.position + fraction * axis.visibleRange();
+    const sens = props.zoomSensitivity && props.zoomSensitivity > 0 ? props.zoomSensitivity : 1;
+    const dir = props.invertZoom ? 1 : -1;
+    zoomAnchored(axis, axis.zoom * Math.exp(dir * d * k * sens), fraction, anchor);
+  };
 
   const handleWheel = (event: WheelEvent) => {
-    const hName = props.horizontalAxis ?? "horizontal";
     const behavior = props.wheel ?? "alt-zoom";
     const actions =
       typeof behavior === "function"
         ? ([] as WheelAction[]).concat(behavior(event))
-        : presetActions(behavior, event, hName);
+        : presetActions(behavior, event, hName(), vName());
     if (!actions.length) return;
 
     const hv = h();
@@ -184,6 +241,7 @@ const ScrollContainer = (
     // The delta component an action reads.
     const deltaFor = (from?: "x" | "y" | "dominant") =>
       from === "x" ? dxPx : from === "y" ? dyPx : dominantPx;
+    const pinching = event.ctrlKey && event.deltaMode === 0;
 
     let prevented = false;
     const prevent = () => {
@@ -206,11 +264,17 @@ const ScrollContainer = (
 
       if (action.type === "zoom") {
         prevent();
-        zoomRect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+        const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
         // Pointer coord is chosen by axis ORIENTATION, not delta direction: a
         // horizontal axis anchors on clientX even for a vertical wheel.
         const isH = axis === hv;
-        zoomAxis(axis, delta, isH ? event.clientX : event.clientY, isH);
+        zoomAxis(
+          axis,
+          delta,
+          isH ? event.clientX : event.clientY,
+          rect,
+          pinching ? PINCH_ZOOM_K : WHEEL_ZOOM_K,
+        );
       } else {
         // Scroll. If the browser can natively scroll this (no explicit axis, a delta
         // the axis orientation matches) and momentum is on, let native handle it for
@@ -224,6 +288,98 @@ const ScrollContainer = (
     }
   };
 
+  /* Touch pinch.
+   *
+   * Identified by arity: one finger is a pan, which native scrolling already does
+   * well; two are a pinch. Each axis zooms by the finger spread along it, so a
+   * sideways pinch asks for more of the horizontal axis and a vertical one for more
+   * of the vertical — two unrelated axes (time and pitch) shouldn't share one
+   * distance. Zoom is computed against the spread at the START of the gesture so a
+   * slow pinch can't accumulate drift, and the values under the starting midpoint
+   * stay under the moving midpoint, which is what makes a two-finger drag pan.
+   *
+   * Pointer ends are heard on the window, not this element: a finger lifted
+   * elsewhere (or released from capture by a child) would otherwise leave a stale
+   * entry, and the next single touch would count as the second finger of a pinch. */
+  const activePointers = new Map<number, { x: number; y: number }>();
+  type AxisPinch = { axis: ViewPortAxis; spread: number; zoom: number; anchor: number };
+  let pinchStart: { h?: AxisPinch; v?: AxisPinch } | undefined;
+
+  const pointerSpread = () => {
+    const [first, second] = [...activePointers.values()];
+    if (!first || !second) return undefined;
+    return {
+      x: Math.abs(first.x - second.x),
+      y: Math.abs(first.y - second.y),
+      midX: (first.x + second.x) / 2,
+      midY: (first.y + second.y) / 2,
+    };
+  };
+
+  let rectAtPinch = { left: 0, top: 0 } as DOMRect;
+
+  const beginPinch = (element: HTMLElement) => {
+    const spread = pointerSpread();
+    if (!spread) return;
+    rectAtPinch = element.getBoundingClientRect();
+    const start = (axis: ViewPortAxis | undefined, along: number, mid: number) =>
+      axis && {
+        axis,
+        spread: Math.max(along, MIN_PINCH_SPREAD_PX),
+        zoom: axis.zoom,
+        anchor: axis.position + fractionAt(axis, mid, rectAtPinch) * axis.visibleRange(),
+      };
+    pinchStart = { h: start(h(), spread.x, spread.midX), v: start(v(), spread.y, spread.midY) };
+  };
+
+  const endPointer = (event: PointerEvent) => {
+    activePointers.delete(event.pointerId);
+    // Lifting one finger of two ends the pinch rather than re-baselining it, so the
+    // remaining finger goes back to panning instead of dragging the zoom.
+    if (activePointers.size < 2) pinchStart = undefined;
+    if (activePointers.size === 0) {
+      window.removeEventListener("pointerup", endPointer);
+      window.removeEventListener("pointercancel", endPointer);
+    }
+  };
+
+  const handlePointerDown = (event: PointerEvent & { currentTarget: HTMLDivElement }) => {
+    if (event.pointerType === "mouse" || props.pinch === false) return;
+    if (activePointers.size === 0) {
+      window.addEventListener("pointerup", endPointer);
+      window.addEventListener("pointercancel", endPointer);
+    }
+    activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (activePointers.size === 2) beginPinch(event.currentTarget);
+  };
+
+  const handlePointerMove = (event: PointerEvent) => {
+    if (!activePointers.has(event.pointerId)) return;
+    activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (activePointers.size !== 2 || !pinchStart) return;
+
+    const spread = pointerSpread();
+    if (!spread) return;
+    event.preventDefault();
+
+    const apply = (pinch: AxisPinch | undefined, along: number, mid: number) => {
+      if (!pinch) return;
+      zoomAnchored(
+        pinch.axis,
+        (pinch.zoom * Math.max(along, MIN_PINCH_SPREAD_PX)) / pinch.spread,
+        fractionAt(pinch.axis, mid, rectAtPinch),
+        pinch.anchor,
+      );
+    };
+    apply(pinchStart.h, spread.x, spread.midX);
+    apply(pinchStart.v, spread.y, spread.midY);
+  };
+
+  onCleanup(() => {
+    window.removeEventListener("pointerup", endPointer);
+    window.removeEventListener("pointercancel", endPointer);
+  });
+
   // Push axis position/zoom back into the native scroll offset + content size.
   createEffect(() => {
     if (!content?.parentElement) return;
@@ -231,21 +387,22 @@ const ScrollContainer = (
     const hv = h();
 
     // An axis that's present sizes its dimension to zoom * pixelSize (the scroll
-    // range). An absent axis fills the viewport (100%) so 1-D use doesn't collapse.
-    const scrollDivHeight = vv ? vv.zoom * vv.pixelSize : undefined;
+    // range), plus any fixed inset. An absent axis fills the viewport (100%) so 1-D
+    // use doesn't collapse.
+    const scrollDivHeight = vv ? vv.zoom * vv.pixelSize + inset() : undefined;
     const scrollDivWidth = hv ? hv.zoom * hv.pixelSize : undefined;
     content.style.height = scrollDivHeight != null ? `${scrollDivHeight}px` : "100%";
     content.style.width = scrollDivWidth != null ? `${scrollDivWidth}px` : "100%";
 
     let scrollTop: number | undefined;
     let scrollLeft: number | undefined;
-    if (vv && typeof scrollDivHeight === "number") {
+    if (vv) {
       const max = vv.maxPosition();
-      scrollTop = (max > 0 ? vv.position / max : 0) * (scrollDivHeight - vv.pixelSize);
+      scrollTop = (max > 0 ? vv.position / max : 0) * scrollRange(vv);
     }
-    if (hv && typeof scrollDivWidth === "number") {
+    if (hv) {
       const max = hv.maxPosition();
-      scrollLeft = (max > 0 ? hv.position / max : 0) * (scrollDivWidth - hv.pixelSize);
+      scrollLeft = (max > 0 ? hv.position / max : 0) * scrollRange(hv);
     }
 
     didUpdateScroll = true;
@@ -255,21 +412,32 @@ const ScrollContainer = (
     });
   });
 
-  const vw = () => v()?.pixelSize;
+  const vh = () => {
+    const size = v()?.pixelSize;
+    return size != null ? size + inset() : undefined;
+  };
   const hw = () => h()?.pixelSize;
 
   return (
     <div
       ref={props.ref}
-      class={SCROLL_CLASS}
+      class={[props.nativeScrollbars ? "" : SCROLL_CLASS, props.class ?? ""]
+        .filter(Boolean)
+        .join(" ")}
       style={{
         height: "100%",
         width: "100%",
         overflow: "scroll",
         "pointer-events": "auto",
+        // One finger still scrolls natively; two are the pinch above, not the
+        // browser's page zoom.
+        "touch-action": "pan-x pan-y",
+        ...props.style,
       }}
       onScroll={handleScroll}
       onWheel={handleWheel}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
     >
       <div ref={content} style={{ height: "100%", width: "100%" }}>
         {/* Sticky inner box keeps the content pinned to the viewport while the outer
@@ -278,7 +446,7 @@ const ScrollContainer = (
           style={{
             top: 0,
             left: 0,
-            height: vw() != null ? `${vw()}px` : "100%",
+            height: vh() != null ? `${vh()}px` : "100%",
             width: hw() != null ? `${hw()}px` : "100%",
             position: "sticky",
             overflow: "hidden",

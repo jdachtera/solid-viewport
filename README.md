@@ -93,9 +93,18 @@ const dims = () => axis.dimensions(note.start, note.length); // { offset, size }
 
 `<ScrollContainer>` props:
 
-- `wheel` — preset `"alt-zoom"` (default: Alt/Option or ctrl-pinch zooms, else scrolls) · `"zoom"` · `"scroll"` · `"none"` · or a resolver `(event) => ({ type: "zoom" | "scroll" | "none", axis? })` for full control (shift-for-horizontal, per-axis, custom modifiers).
+- `wheel` — preset `"alt-zoom"` (default: Alt/Option zooms the dominant axis, a trackpad pinch — ctrl+wheel — zooms every axis, else scrolls) · `"zoom"` · `"scroll"` · `"none"` · or a resolver `(event) => ({ type: "zoom" | "scroll" | "none", axis? })` for full control (shift-for-horizontal, per-axis, custom modifiers).
 - `zoomSensitivity` (default 1) / `invertZoom` — zoom feel; wire these to a user preference.
 - `momentum` (default true) — pan via native scroll for trackpad inertia; the 1-D case a native scroll can't reach falls back to a manual pan.
+
+## Touch, layout and look
+
+- `pinch` (default true) — two fingers zoom each axis by their spread along it, and the content under them follows as they move, so a two-finger drag pans.
+- `verticalInset` — px of fixed content at the top of the box, above the vertical axis's own area (e.g. a time ruler over a piano roll's notes).
+- `nativeScrollbars` (default false) — show the browser's scrollbars instead of hiding them for `<ScrollBar>`.
+- `class` / `style` — passed to the scrolling element.
+
+Pointer anchoring (zoom and pinch) is measured from the container's own box, so an axis's `pixelOffset` may be in container coordinates (`0`) or screen coordinates (an element's client rect).
 
 ## Zoom slider
 
