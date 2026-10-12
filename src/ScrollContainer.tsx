@@ -13,6 +13,11 @@ const WHEEL_ZOOM_K = 0.0015;
 // event, where a mouse notch is ~100), so at the wheel rate it would barely zoom.
 const PINCH_ZOOM_K = 0.01;
 
+// Browsers stop laying out elements somewhere past ~17M px (Firefox) to ~33M px
+// (Chrome), and a deep zoom of a long axis (a waveform at sample level) asks for
+// far more. The scroll spacer is capped below that; scrolling stays proportional.
+const DEFAULT_MAX_SCROLL_SIZE = 10_000_000;
+
 // Below this the fingers are close enough that the spread ratio is mostly noise, and
 // a touch pinch that starts there would jump the zoom by a wild factor.
 const MIN_PINCH_SPREAD_PX = 20;
@@ -154,6 +159,9 @@ const ScrollContainer = (
     // axis's own area — e.g. a time ruler over a piano roll's notes. The visible box
     // is the axis's pixelSize plus this; the axis maps only its own part.
     verticalInset?: number;
+    // Cap on the scroll spacer's size per axis, in px (default 10,000,000). Beyond
+    // it the native scrollbar maps proportionally onto a larger range per px.
+    maxScrollSize?: number;
   }>,
 ) => {
   let content: HTMLDivElement | undefined;
@@ -175,7 +183,12 @@ const ScrollContainer = (
   // scroll and the position it was set from agree. Measured from the DOM instead,
   // it would also count the inset (and any gutter), and scrolling to the end would
   // never reach the axis's last values.
-  const scrollRange = (axis: ViewPortAxis) => (axis.zoom - 1) * axis.pixelSize;
+  const scrollSize = (axis: ViewPortAxis) =>
+    Math.max(
+      axis.pixelSize,
+      Math.min(axis.zoom * axis.pixelSize, props.maxScrollSize ?? DEFAULT_MAX_SCROLL_SIZE),
+    );
+  const scrollRange = (axis: ViewPortAxis) => scrollSize(axis) - axis.pixelSize;
 
   const handleScroll = (event: { currentTarget: HTMLDivElement }) => {
     if (didUpdateScroll) {
@@ -439,8 +452,8 @@ const ScrollContainer = (
     // An axis that's present sizes its dimension to zoom * pixelSize (the scroll
     // range), plus any fixed inset. An absent axis fills the viewport (100%) so 1-D
     // use doesn't collapse.
-    const scrollDivHeight = vv ? vv.zoom * vv.pixelSize + inset() : undefined;
-    const scrollDivWidth = hv ? hv.zoom * hv.pixelSize : undefined;
+    const scrollDivHeight = vv ? scrollSize(vv) + inset() : undefined;
+    const scrollDivWidth = hv ? scrollSize(hv) : undefined;
     content.style.height = scrollDivHeight != null ? `${scrollDivHeight}px` : "100%";
     content.style.width = scrollDivWidth != null ? `${scrollDivWidth}px` : "100%";
 

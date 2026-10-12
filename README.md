@@ -102,6 +102,7 @@ const dims = () => axis.dimensions(note.start, note.length); // { offset, size }
 - `pinch` — which axes a pinch zooms, by touch or trackpad: `true` / `"both"` (default), `"horizontal"`, `"vertical"`, or `false`. On touch, two fingers zoom each axis by their spread along it and the content under them follows as they move, so a two-finger drag pans.
 - `verticalInset` — px of fixed content at the top of the box, above the vertical axis's own area (e.g. a time ruler over a piano roll's notes).
 - `nativeScrollbars` (default false) — show the browser's scrollbars instead of hiding them for `<ScrollBar>`.
+- `maxScrollSize` (default 10,000,000) — cap on the scroll spacer in px; browsers stop laying out elements past ~17–33M px, which a deep zoom of a long axis exceeds. Scrolling stays proportional.
 - `class` / `style` — passed to the scrolling element.
 
 Pointer anchoring (zoom and pinch) is measured from the container's own box, so an axis's `pixelOffset` may be in container coordinates (`0`) or screen coordinates (an element's client rect).
